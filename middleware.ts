@@ -62,14 +62,14 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    // Verificar se o usuário tem perfil de professor
+    // Verificar se o usuário tem perfil de professor ou admin
     const { data: profile } = await supabase
       .from("profiles")
       .select("papel")
       .eq("id", user.id)
       .single();
 
-    if (!profile || profile.papel !== "teacher") {
+    if (!profile || (profile.papel !== "teacher" && (profile.papel as string) !== "admin")) {
       const url = request.nextUrl.clone();
       url.pathname = "/professor/login";
       url.searchParams.set("error", "unauthorized");

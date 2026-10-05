@@ -38,9 +38,9 @@ export default function ProfessorLoginPage() {
         .eq("id", data.user.id)
         .single();
 
-      if (profileError || profile?.papel !== "teacher") {
+      if (profileError || (profile?.papel !== "teacher" && profile?.papel !== "admin")) {
         await supabase.auth.signOut();
-        setErro("Acesso não autorizado. Esta conta não possui perfil de professor.");
+        setErro("Acesso não autorizado. Esta conta não possui perfil de professor ou administrador.");
         setCarregando(false);
         return;
       }
