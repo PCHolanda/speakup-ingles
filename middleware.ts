@@ -54,8 +54,8 @@ export async function middleware(request: NextRequest) {
   // Verificar autenticação
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Proteção da área do professor (/professor/...)
-  if (pathname.startsWith("/professor")) {
+  // Proteção da área do professor e administrativa (/professor/... e /admin/...)
+  if (pathname.startsWith("/professor") || pathname.startsWith("/admin")) {
     if (!user) {
       const url = request.nextUrl.clone();
       url.pathname = "/professor/login";

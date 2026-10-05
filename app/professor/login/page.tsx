@@ -45,7 +45,7 @@ export default function ProfessorLoginPage() {
         return;
       }
 
-      router.push("/professor/turmas");
+      router.push("/admin");
     } catch {
       setErro("Falha de conexão ao autenticar. Tente novamente.");
       setCarregando(false);
