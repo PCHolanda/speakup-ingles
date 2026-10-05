@@ -19,35 +19,26 @@ export default function ProfessorLoginPage() {
     setCarregando(true);
 
     try {
-      const supabase = createClient();
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password: senha,
+      const res = await fetch("/api/professor/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim(),
+          senha,
+        }),
       });
 
-      if (error || !data.user) {
-        setErro("E-mail ou senha incorretos. Verifique suas credenciais.");
-        setCarregando(false);
-        return;
+      const data = await res.json();
+
+      if (!res.ok) {
+        setErro(data.error || "E-mail ou senha incorretos.");
+      } else {
+        router.push(data.redirectUrl || "/admin");
+        router.refresh();
       }
-
-      // Validar se é professor
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("papel")
-        .eq("id", data.user.id)
-        .single();
-
-      if (profileError || (profile?.papel !== "teacher" && profile?.papel !== "admin")) {
-        await supabase.auth.signOut();
-        setErro("Acesso não autorizado. Esta conta não possui perfil de professor ou administrador.");
-        setCarregando(false);
-        return;
-      }
-
-      router.push("/admin");
     } catch {
-      setErro("Falha de conexão ao autenticar. Tente novamente.");
+      setErro("Falha de conexão com o servidor. Tente novamente.");
+    } finally {
       setCarregando(false);
     }
   };
