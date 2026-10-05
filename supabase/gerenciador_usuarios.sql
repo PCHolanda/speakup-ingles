@@ -4,8 +4,6 @@
 
 -- ------------------------------------------------------------------------------
 -- PASSO 1: Execute APENAS esta linha primeiro e clique em "Run" no Supabase:
--- (O Postgres exige que a adição de um novo valor no enum seja confirmada antes de ser usada)
---
 -- alter type papel add value if not exists 'admin';
 -- ------------------------------------------------------------------------------
 
@@ -43,6 +41,7 @@ begin
 
   v_encrypted_pw := extensions.crypt(p_senha, extensions.gen_salt('bf'));
 
+  -- 1. Inserir em auth.users
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
@@ -55,16 +54,18 @@ begin
     now(), now()
   );
 
+  -- 2. Inserir em auth.identities (id é do tipo UUID)
   insert into auth.identities (
     id, user_id, identity_data, provider, provider_id,
     last_sign_in_at, created_at, updated_at
   ) values (
-    v_user_id::text, v_user_id,
+    v_user_id, v_user_id,
     jsonb_build_object('sub', v_user_id::text, 'email', lower(trim(p_email))),
     'email', v_user_id::text,
     now(), now(), now()
   );
 
+  -- 3. Inserir perfil
   insert into profiles (id, papel, nome)
   values (v_user_id, 'admin'::papel, p_nome);
 
@@ -91,6 +92,7 @@ begin
 
   v_encrypted_pw := extensions.crypt(p_senha, extensions.gen_salt('bf'));
 
+  -- 1. Inserir em auth.users
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
@@ -103,16 +105,18 @@ begin
     now(), now()
   );
 
+  -- 2. Inserir em auth.identities (id é do tipo UUID)
   insert into auth.identities (
     id, user_id, identity_data, provider, provider_id,
     last_sign_in_at, created_at, updated_at
   ) values (
-    v_user_id::text, v_user_id,
+    v_user_id, v_user_id,
     jsonb_build_object('sub', v_user_id::text, 'email', lower(trim(p_email))),
     'email', v_user_id::text,
     now(), now(), now()
   );
 
+  -- 3. Inserir perfil
   insert into profiles (id, papel, nome)
   values (v_user_id, 'teacher'::papel, p_nome);
 
@@ -177,6 +181,7 @@ begin
   v_synthetic_email := 'aluno-' || v_aluno_id || '@speakup.local';
   v_encrypted_pw := extensions.crypt(trim(p_pin), extensions.gen_salt('bf'));
 
+  -- 1. Inserir em auth.users
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
@@ -189,19 +194,22 @@ begin
     now(), now()
   );
 
+  -- 2. Inserir em auth.identities (id é do tipo UUID)
   insert into auth.identities (
     id, user_id, identity_data, provider, provider_id,
     last_sign_in_at, created_at, updated_at
   ) values (
-    v_aluno_id::text, v_aluno_id,
+    v_aluno_id, v_aluno_id,
     jsonb_build_object('sub', v_aluno_id::text, 'email', v_synthetic_email),
     'email', v_aluno_id::text,
     now(), now(), now()
   );
 
+  -- 3. Inserir em profiles
   insert into profiles (id, papel, nome)
   values (v_aluno_id, 'student'::papel, p_nome_aluno);
 
+  -- 4. Matricular na turma
   insert into turma_alunos (turma_id, aluno_id)
   values (v_turma_id, v_aluno_id);
 
