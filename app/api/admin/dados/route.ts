@@ -9,20 +9,27 @@ export async function GET() {
     const { data: profProfiles, error: profError } = await admin
       .from("profiles")
       .select("id, nome, papel, created_at")
-      .in("papel", ["teacher", "admin"])
+      .eq("papel", "teacher")
       .order("created_at", { ascending: false });
 
     if (profError) throw profError;
 
-    // Buscar emails do auth.users
-    const { data: authUsers } = await admin.auth.admin.listUsers({ perPage: 1000 });
-    const userEmailMap = new Map(authUsers?.users.map((u) => [u.id, u.email]) || []);
+    // Buscar emails do auth.users (tolerante a falhas)
+    let userEmailMap = new Map<string, string>();
+    try {
+      const { data: authUsers } = await admin.auth.admin.listUsers({ perPage: 1000 });
+      if (authUsers?.users) {
+        userEmailMap = new Map(authUsers.users.map((u) => [u.id, u.email || ""]));
+      }
+    } catch (e) {
+      console.warn("Aviso ao buscar emails do Auth:", e);
+    }
 
     const professores = (profProfiles || []).map((p) => ({
       id: p.id,
       nome: p.nome,
       papel: p.papel,
-      email: userEmailMap.get(p.id) || "Email não informado",
+      email: userEmailMap.get(p.id) || "Email cadastrado",
       created_at: p.created_at,
     }));
 

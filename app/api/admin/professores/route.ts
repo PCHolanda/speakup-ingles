@@ -47,10 +47,10 @@ export async function POST(request: NextRequest) {
 
     const userId = authData.user.id;
 
-    // 2. Inserir ou atualizar na tabela profiles
+    // 2. Inserir ou atualizar na tabela profiles com o papel 'teacher' do enum
     const { error: profileError } = await admin.from("profiles").upsert({
       id: userId,
-      papel: papel,
+      papel: "teacher",
       nome: nome.trim(),
     });
 
