@@ -29,7 +29,8 @@ export async function POST(request: NextRequest) {
       email: email.trim().toLowerCase(),
       password: senha,
       email_confirm: true,
-      user_metadata: { nome: nome.trim() },
+      user_metadata: { nome: nome.trim(), papel: papel || "teacher" },
+      app_metadata: { papel: papel || "teacher" },
     });
 
     if (authError || !authData.user) {

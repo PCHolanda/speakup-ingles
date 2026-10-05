@@ -39,8 +39,7 @@ export async function middleware(request: NextRequest) {
     pathname === "/" ||
     pathname === "/professor/login" ||
     pathname === "/aluno/login" ||
-    pathname.startsWith("/api/aluno/turmas") ||
-    pathname.startsWith("/api/aluno/login") ||
+    pathname.startsWith("/api/") ||
     pathname.startsWith("/public") ||
     pathname.startsWith("/seed") ||
     pathname.startsWith("/icons") ||
@@ -62,14 +61,9 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    // Verificar se o usuário tem perfil de professor ou admin
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("papel")
-      .eq("id", user.id)
-      .single();
-
-    if (!profile || (profile.papel !== "teacher" && (profile.papel as string) !== "admin")) {
+    const papel = user.app_metadata?.papel || user.user_metadata?.papel;
+    // Se o usuário autenticado for explicitamente um estudante, impede acesso ao painel
+    if (papel === "student") {
       const url = request.nextUrl.clone();
       url.pathname = "/professor/login";
       url.searchParams.set("error", "unauthorized");
@@ -82,19 +76,6 @@ export async function middleware(request: NextRequest) {
     if (!user) {
       const url = request.nextUrl.clone();
       url.pathname = "/aluno/login";
-      return NextResponse.redirect(url);
-    }
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("papel")
-      .eq("id", user.id)
-      .single();
-
-    if (!profile || profile.papel !== "student") {
-      const url = request.nextUrl.clone();
-      url.pathname = "/aluno/login";
-      url.searchParams.set("error", "unauthorized");
       return NextResponse.redirect(url);
     }
   }

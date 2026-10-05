@@ -43,7 +43,8 @@ export async function POST(request: NextRequest) {
       email: tempEmail,
       password: pin,
       email_confirm: true,
-      user_metadata: { nome: nome.trim() },
+      user_metadata: { nome: nome.trim(), papel: "student" },
+      app_metadata: { papel: "student" },
     });
 
     if (authError || !authData.user) {

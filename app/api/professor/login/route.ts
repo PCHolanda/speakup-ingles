@@ -52,6 +52,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Sincronizar papel nos metadados de autenticação se necessário
+    if (!data.user.user_metadata?.papel || !data.user.app_metadata?.papel) {
+      await admin.auth.admin.updateUserById(data.user.id, {
+        user_metadata: { ...data.user.user_metadata, papel: profile.papel, nome: profile.nome },
+        app_metadata: { papel: profile.papel },
+      });
+    }
+
     return NextResponse.json({
       success: true,
       user: {
