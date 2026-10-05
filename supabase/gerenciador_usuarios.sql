@@ -1,30 +1,13 @@
 -- ==============================================================================
--- SpeakUp A1: Gerenciador Oficial de Usuários (Admin, Professores, Turmas, Alunos)
+-- SpeakUp A1: Gerenciador de Usuários (Admin, Professores, Turmas e Alunos)
+-- Execute este script completo de UMA SÓ VEZ no SQL Editor do Supabase.
 -- ==============================================================================
-
--- ------------------------------------------------------------------------------
--- PASSO 1: Execute APENAS esta linha primeiro e clique em "Run" no Supabase:
--- alter type papel add value if not exists 'admin';
--- ------------------------------------------------------------------------------
-
--- ------------------------------------------------------------------------------
--- PASSO 2: Depois de rodar o Passo 1, execute todo o código abaixo:
--- ------------------------------------------------------------------------------
 
 create extension if not exists pgcrypto with schema extensions;
 
--- Atualizar regra RLS para que Administradores também acessem o painel
-create or replace function is_teacher()
-returns boolean security definer set search_path = public as $$
-  select exists (
-    select 1 from profiles
-    where id = auth.uid() and papel::text in ('teacher', 'admin')
-  );
-$$ language sql stable;
-
-
 -- ------------------------------------------------------------------------------
--- FUNÇÃO 1: criar_admin(nome, email, senha)
+-- 1. FUNÇÃO: criar_admin(nome, email, senha)
+-- Cria um Administrador com permissões completas de gestão (Portal Docente)
 -- ------------------------------------------------------------------------------
 create or replace function criar_admin(
   p_nome text,
@@ -41,7 +24,7 @@ begin
 
   v_encrypted_pw := extensions.crypt(p_senha, extensions.gen_salt('bf'));
 
-  -- 1. Inserir em auth.users
+  -- Inserir em auth.users
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
@@ -54,7 +37,7 @@ begin
     now(), now()
   );
 
-  -- 2. Inserir em auth.identities (id é do tipo UUID)
+  -- Inserir em auth.identities (id é UUID)
   insert into auth.identities (
     id, user_id, identity_data, provider, provider_id,
     last_sign_in_at, created_at, updated_at
@@ -65,9 +48,9 @@ begin
     now(), now(), now()
   );
 
-  -- 3. Inserir perfil
+  -- Inserir perfil com acesso total de gestão (teacher)
   insert into profiles (id, papel, nome)
-  values (v_user_id, 'admin'::papel, p_nome);
+  values (v_user_id, 'teacher', p_nome);
 
   return v_user_id;
 end;
@@ -75,7 +58,8 @@ $$ language plpgsql;
 
 
 -- ------------------------------------------------------------------------------
--- FUNÇÃO 2: criar_professor(nome, email, senha)
+-- 2. FUNÇÃO: criar_professor(nome, email, senha)
+-- Cria um Professor vinculado ao Portal Docente
 -- ------------------------------------------------------------------------------
 create or replace function criar_professor(
   p_nome text,
@@ -92,7 +76,7 @@ begin
 
   v_encrypted_pw := extensions.crypt(p_senha, extensions.gen_salt('bf'));
 
-  -- 1. Inserir em auth.users
+  -- Inserir em auth.users
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
@@ -105,7 +89,7 @@ begin
     now(), now()
   );
 
-  -- 2. Inserir em auth.identities (id é do tipo UUID)
+  -- Inserir em auth.identities (id é UUID)
   insert into auth.identities (
     id, user_id, identity_data, provider, provider_id,
     last_sign_in_at, created_at, updated_at
@@ -116,9 +100,9 @@ begin
     now(), now(), now()
   );
 
-  -- 3. Inserir perfil
+  -- Inserir perfil
   insert into profiles (id, papel, nome)
-  values (v_user_id, 'teacher'::papel, p_nome);
+  values (v_user_id, 'teacher', p_nome);
 
   return v_user_id;
 end;
@@ -126,7 +110,8 @@ $$ language plpgsql;
 
 
 -- ------------------------------------------------------------------------------
--- FUNÇÃO 3: criar_turma(email_do_professor, nome_da_turma, codigo_6_digitos)
+-- 3. FUNÇÃO: criar_turma(email_do_professor, nome_da_turma, codigo_6_digitos)
+-- Cria uma Turma vinculada ao professor
 -- ------------------------------------------------------------------------------
 create or replace function criar_turma(
   p_professor_email text,
@@ -156,7 +141,8 @@ $$ language plpgsql;
 
 
 -- ------------------------------------------------------------------------------
--- FUNÇÃO 4: criar_aluno(codigo_da_turma, nome_do_aluno, pin_6_numeros)
+-- 4. FUNÇÃO: criar_aluno(codigo_da_turma, nome_do_aluno, pin_6_numeros)
+-- Cria Aluno com PIN, email sintético e matrícula automática
 -- ------------------------------------------------------------------------------
 create or replace function criar_aluno(
   p_codigo_turma text,
@@ -181,7 +167,7 @@ begin
   v_synthetic_email := 'aluno-' || v_aluno_id || '@speakup.local';
   v_encrypted_pw := extensions.crypt(trim(p_pin), extensions.gen_salt('bf'));
 
-  -- 1. Inserir em auth.users
+  -- Inserir em auth.users
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
@@ -194,7 +180,7 @@ begin
     now(), now()
   );
 
-  -- 2. Inserir em auth.identities (id é do tipo UUID)
+  -- Inserir em auth.identities (id é UUID)
   insert into auth.identities (
     id, user_id, identity_data, provider, provider_id,
     last_sign_in_at, created_at, updated_at
@@ -205,11 +191,11 @@ begin
     now(), now(), now()
   );
 
-  -- 3. Inserir em profiles
+  -- Inserir em profiles
   insert into profiles (id, papel, nome)
-  values (v_aluno_id, 'student'::papel, p_nome_aluno);
+  values (v_aluno_id, 'student', p_nome_aluno);
 
-  -- 4. Matricular na turma
+  -- Matricular na turma
   insert into turma_alunos (turma_id, aluno_id)
   values (v_turma_id, v_aluno_id);
 
