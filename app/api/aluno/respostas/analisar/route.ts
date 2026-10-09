@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
 
     const { data: pergunta } = await admin
       .from("perguntas")
-      .select("id, atividade_id, enunciado, instrucao_pt, respostas_esperadas, texto_referencia, foco_avaliacao")
+      .select("id, atividade_id, enunciado, instrucao_pt, respostas_esperadas, texto_referencia, foco_avaliacao, tipo, imagem_path, gabarito")
       .eq("id", pergunta_id)
       .maybeSingle();
     if (!pergunta || pergunta.atividade_id !== sessao.atividade_id) {
@@ -102,7 +102,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Análise com IA
-    const analise = await analisarPronuncia(bytes, pergunta);
+    const analise = await analisarPronuncia(bytes, {
+      enunciado: pergunta.enunciado,
+      instrucao_pt: pergunta.instrucao_pt,
+      respostas_esperadas: pergunta.respostas_esperadas,
+      texto_referencia: pergunta.texto_referencia,
+      foco_avaliacao: pergunta.foco_avaliacao,
+      tipo: pergunta.tipo,
+      imagem_path: pergunta.imagem_path,
+    });
 
     // Salvar áudio + análise para o professor (falha aqui não impede o feedback ao aluno)
     let salvo = false;
@@ -128,7 +136,11 @@ export async function POST(request: NextRequest) {
         tentativa,
         audio_path: audioPath,
         transcricao: analise.transcricao,
-        metricas: { qualidade: qualidade.metricas, modelo: process.env.GEMINI_MODEL || "gemini-flash-latest" },
+        metricas: {
+          qualidade: qualidade.metricas,
+          modelo: process.env.GEMINI_MODEL || "gemini-flash-latest",
+          ...(analise.analise_detalhada ? { analise_detalhada: analise.analise_detalhada } : {}),
+        },
         nota_pronuncia: analise.nota_pronuncia,
         nota_vocabulario: analise.nota_vocabulario,
         nota_fluencia: analise.nota_fluencia,
@@ -140,6 +152,7 @@ export async function POST(request: NextRequest) {
           palavras: analise.palavras,
           frase_modelo: analise.frase_modelo,
           respondeu_pergunta: analise.respondeu_pergunta,
+          ...(analise.analise_detalhada ? { analise_detalhada: analise.analise_detalhada } : {}),
         },
         revisado: false,
       };

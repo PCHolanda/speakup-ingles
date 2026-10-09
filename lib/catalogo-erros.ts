@@ -4,14 +4,17 @@
  */
 
 export const CODIGOS_ERRO = [
-  "TH_T_F_D",
-  "R_INICIAL_H",
+  "TH",
+  "R_INICIAL",
   "EPENTESE",
-  "ED_SILABA",
-  "YEARS_EARS",
-  "V_W",
+  "SUFIXO_ED",
   "VOGAL_CURTA_LONGA",
-  "H_MUDO",
+  "V_W",
+  "Y_INICIAL",
+  "H_ASPIRADO",
+  "CONSOANTE_FINAL",
+  "OUTRO",
+  "NENHUM",
 ] as const;
 
 export type CodigoErro = (typeof CODIGOS_ERRO)[number];
@@ -24,7 +27,8 @@ export type IlustracaoBoca =
   | "labio_nos_dentes"
   | "sorriso_curto_longo"
   | "consoante_final"
-  | "semivogal_y";
+  | "semivogal_y"
+  | "neutra";
 
 export interface EntradaCatalogo {
   codigo: CodigoErro;
@@ -40,19 +44,19 @@ export interface EntradaCatalogo {
 }
 
 export const CATALOGO_ERROS: Record<CodigoErro, EntradaCatalogo> = {
-  TH_T_F_D: {
-    codigo: "TH_T_F_D",
+  TH: {
+    codigo: "TH",
     nome: "Som do TH",
     descricao: "Troca de /θ/ ou /ð/ por /t/, /f/, /d/ ou /s/.",
     fonemas: ["θ", "ð"],
     dica: "Coloque a pontinha da língua entre os dentes e sopre: thhh-ree.",
     ilustracao: "lingua_entre_dentes",
-    exemplo: "three → tree",
+    exemplo: "three → tree / free",
   },
-  R_INICIAL_H: {
-    codigo: "R_INICIAL_H",
+  R_INICIAL: {
+    codigo: "R_INICIAL",
     nome: "R do começo",
-    descricao: "R inicial pronunciado como /h/ (\"red\" soando como \"head\").",
+    descricao: "R inicial pronunciado como /h/ (red soando como head).",
     fonemas: ["ɹ"],
     dica: "Enrole a língua para trás sem encostar no céu da boca: rrred.",
     ilustracao: "lingua_recuada",
@@ -60,58 +64,94 @@ export const CATALOGO_ERROS: Record<CodigoErro, EntradaCatalogo> = {
   },
   EPENTESE: {
     codigo: "EPENTESE",
-    nome: "Vogal extra no final",
-    descricao: "Inserção de vogal depois de consoante final (\"big\" → \"bigi\").",
-    fonemas: ["ɡ", "t", "k", "d", "p", "b"],
-    dica: "Termine a palavra no som da consoante, sem colocar um \"i\" no final: big.",
+    nome: "Vogal extra no final/início",
+    descricao: "Inserção de vogal antes ou depois de consoante (stop → istópi, big → bigui).",
+    fonemas: ["ɡ", "t", "k", "d", "p", "b", "s"],
+    dica: "Termine no som da consoante seca, sem soltar um 'i' no final: big.",
     ilustracao: "consoante_final",
-    exemplo: "big → bigi",
+    exemplo: "stop → istópi / big → bigui",
   },
-  ED_SILABA: {
-    codigo: "ED_SILABA",
+  SUFIXO_ED: {
+    codigo: "SUFIXO_ED",
     nome: "Final -ed",
-    descricao: "-ed pronunciado como sílaba extra fora de /t/ e /d/ (\"walked\" → \"walk-ed\").",
+    descricao: "-ed pronunciado como sílaba extra fora de /t/ e /d/ (played → pleiédi).",
     fonemas: ["t", "d"],
-    dica: "Em \"walked\" o final é só um /t/ rapidinho: walkt.",
+    dica: "Em 'played' o final é só o som rápido de /d/: pleid.",
     ilustracao: "consoante_final",
-    exemplo: "walked → walk-ed",
-  },
-  YEARS_EARS: {
-    codigo: "YEARS_EARS",
-    nome: "Y de years",
-    descricao: "Omissão do /j/ inicial (\"years\" soando como \"ears\").",
-    fonemas: ["j"],
-    dica: "Comece com um \"i\" bem rapidinho antes: iiyears.",
-    ilustracao: "semivogal_y",
-    exemplo: "years → ears",
-  },
-  V_W: {
-    codigo: "V_W",
-    nome: "Som do V",
-    descricao: "Troca de /v/ por /w/ ou /b/.",
-    fonemas: ["v"],
-    dica: "Encoste os dentes de cima no lábio de baixo e faça vibrar: vvvery.",
-    ilustracao: "labio_nos_dentes",
-    exemplo: "very → berry",
+    exemplo: "played → pleiédi",
   },
   VOGAL_CURTA_LONGA: {
     codigo: "VOGAL_CURTA_LONGA",
-    nome: "I curto e I longo",
-    descricao: "Confusão entre /ɪ/ (ship) e /iː/ (sheep).",
+    nome: "Vogal curta vs longa",
+    descricao: "Confusão entre /ɪ/ e /iː/ (ship/sheep, live/leave).",
     fonemas: ["ɪ", "iː", "i"],
-    dica: "\"ship\" é curtinho e relaxado; \"sheep\" é longo, com sorriso: sheeeep.",
+    dica: "'ship' é curtinho e relaxado; 'sheep' é longo, com sorriso: sheeeep.",
     ilustracao: "sorriso_curto_longo",
     exemplo: "ship → sheep",
   },
-  H_MUDO: {
-    codigo: "H_MUDO",
-    nome: "H aspirado",
-    descricao: "Omissão do /h/ aspirado (\"have\" soando como \"ave\").",
-    fonemas: ["h"],
-    dica: "Solte um ar quentinho da garganta, como quem embaça um vidro: hhhave.",
-    ilustracao: "sopro_garganta",
-    exemplo: "have → ave",
+  V_W: {
+    codigo: "V_W",
+    nome: "Som do V e W",
+    descricao: "Troca entre /v/ e /w/ ou /b/.",
+    fonemas: ["v", "w"],
+    dica: "Para o V, encoste os dentes de cima no lábio de baixo: vvvery.",
+    ilustracao: "labio_nos_dentes",
+    exemplo: "very → berry / water → vater",
   },
+  Y_INICIAL: {
+    codigo: "Y_INICIAL",
+    nome: "Y inicial",
+    descricao: "Omissão ou alteração do /j/ inicial (years soando como ears).",
+    fonemas: ["j"],
+    dica: "Comece com um 'i' bem rapidinho antes: iiyears.",
+    ilustracao: "semivogal_y",
+    exemplo: "years → ears",
+  },
+  H_ASPIRADO: {
+    codigo: "H_ASPIRADO",
+    nome: "H aspirado",
+    descricao: "Omissão do /h/ aspirado ou pronúncia com R forte (house/have).",
+    fonemas: ["h"],
+    dica: "Solte um ar quentinho da garganta, como quem embaça um vidro: hhhouse.",
+    ilustracao: "sopro_garganta",
+    exemplo: "house → ouse / rouse",
+  },
+  CONSOANTE_FINAL: {
+    codigo: "CONSOANTE_FINAL",
+    nome: "Consoante final",
+    descricao: "Final engolido ou nasalizado (cat → ké, time → taimi).",
+    fonemas: ["t", "d", "m", "n", "k", "p"],
+    dica: "Pronuncie suavemente a consoante final sem sumir com ela: ca-t.",
+    ilustracao: "consoante_final",
+    exemplo: "cat → ké / time → taimi",
+  },
+  OUTRO: {
+    codigo: "OUTRO",
+    nome: "Outro som",
+    descricao: "Outra interferência fonética.",
+    fonemas: [],
+    dica: "Ouça o áudio modelo e repita com calma.",
+    ilustracao: "neutra",
+    exemplo: "",
+  },
+  NENHUM: {
+    codigo: "NENHUM",
+    nome: "Pronúncia adequada",
+    descricao: "Sem erro fonético relevante para o nível.",
+    fonemas: [],
+    dica: "Muito bem!",
+    ilustracao: "neutra",
+    exemplo: "",
+  },
+};
+
+// Aliases para compatibilidade retroativa
+export const ALIASES_ERRO: Record<string, CodigoErro> = {
+  TH_T_F_D: "TH",
+  R_INICIAL_H: "R_INICIAL",
+  ED_SILABA: "SUFIXO_ED",
+  YEARS_EARS: "Y_INICIAL",
+  H_MUDO: "H_ASPIRADO",
 };
 
 export function isCodigoErro(v: unknown): v is CodigoErro {
