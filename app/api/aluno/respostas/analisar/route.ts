@@ -10,9 +10,11 @@ export const maxDuration = 60;
 
 const MAX_BYTES = 2 * 1024 * 1024; // ~60s de WAV 16 kHz mono; o limite de 15s é checado pela qualidade
 
+const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 const camposSchema = z.object({
-  sessao_id: z.string().uuid("Sessão inválida"),
-  pergunta_id: z.string().uuid("Pergunta inválida"),
+  sessao_id: z.string().trim().regex(uuidRegex, "Sessão inválida"),
+  pergunta_id: z.string().trim().regex(uuidRegex, "Pergunta inválida"),
 });
 
 export async function POST(request: NextRequest) {
