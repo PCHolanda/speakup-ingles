@@ -6,7 +6,6 @@ import Link from "next/link";
 import {
   Mic,
   Square,
-  Play,
   RotateCcw,
   Volume2,
   HelpCircle,
@@ -18,7 +17,47 @@ import {
   Loader2,
   AlertCircle,
   Home,
+  ThumbsUp,
+  Target,
 } from "lucide-react";
+import { GravadorWav } from "@/lib/audio/wav-recorder";
+import type { ResultadoQualidade } from "@/lib/audio/qualidade";
+
+interface Gravacao {
+  url: string;
+  wav: Blob;
+  qualidade: ResultadoQualidade;
+}
+
+interface PalavraAnalise {
+  palavra: string;
+  status: "ok" | "atencao" | "erro";
+  codigo_erro: string | null;
+  dica: string | null;
+}
+
+interface Analise {
+  transcricao: string;
+  respondeu_pergunta: boolean;
+  nota_pronuncia: number;
+  nota_fluencia: number;
+  nota_vocabulario: number;
+  nota_estrutura: number;
+  resultado: "good_job" | "try_again";
+  ponto_forte: string;
+  ponto_melhorar: string;
+  palavras: PalavraAnalise[];
+  frase_modelo: string;
+}
+
+const CRITERIOS: { chave: keyof Analise; rotulo: string }[] = [
+  { chave: "nota_pronuncia", rotulo: "Pronúncia" },
+  { chave: "nota_fluencia", rotulo: "Fluência" },
+  { chave: "nota_vocabulario", rotulo: "Vocabulário" },
+  { chave: "nota_estrutura", rotulo: "Estrutura" },
+];
+
+const COR_NOTA = ["", "bg-rose-500", "bg-amber-500", "bg-sky-500", "bg-emerald-500"];
 
 interface Pergunta {
   id: string;
@@ -52,20 +91,30 @@ export default function AlunoAtividadePlayerPage({
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
+  const [sessaoId, setSessaoId] = useState<string | null>(null);
+
   // Estados de Áudio e Gravação
   const [falando, setFalando] = useState(false);
   const [gravando, setGravando] = useState(false);
   const [tempoGravacao, setTempoGravacao] = useState(0);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [nivelMic, setNivelMic] = useState(0);
   const [mostrarDica, setMostrarDica] = useState(false);
   const [concluido, setConcluido] = useState(false);
 
-  // Respostas gravadas
-  const [respostasGravadas, setRespostasGravadas] = useState<Record<number, string>>({});
+  // Respostas gravadas e análises, por índice da pergunta
+  const [respostasGravadas, setRespostasGravadas] = useState<Record<number, Gravacao>>({});
+  const [analises, setAnalises] = useState<Record<number, Analise>>({});
+  const [errosAnalise, setErrosAnalise] = useState<Record<number, string>>({});
+  const [analisando, setAnalisando] = useState(false);
+  const [avisoAnalise, setAvisoAnalise] = useState(false);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const gravadorRef = useRef<GravadorWav | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const gravacaoAtual = respostasGravadas[indiceAtual];
+  const audioUrl = gravacaoAtual?.url ?? null;
+  const analiseAtual = analises[indiceAtual];
+  const erroAnaliseAtual = errosAnalise[indiceAtual];
 
   // Carregar dados da atividade
   useEffect(() => {
@@ -82,6 +131,7 @@ export default function AlunoAtividadePlayerPage({
 
         setAtividade(data.atividade);
         setPerguntas(data.perguntas || []);
+        setSessaoId(data.sessaoId || null);
       } catch (err: unknown) {
         setErro(err instanceof Error ? err.message : "Erro de conexão");
       } finally {
@@ -110,62 +160,117 @@ export default function AlunoAtividadePlayerPage({
     window.speechSynthesis.speak(utterance);
   };
 
-  // Iniciar Gravação de Áudio
+  // Limpa o resultado da pergunta atual (nova gravação = nova análise)
+  const limparAnalise = (indice: number) => {
+    setAnalises(({ [indice]: _a, ...resto }) => resto);
+    setErrosAnalise(({ [indice]: _e, ...resto }) => resto);
+    setAvisoAnalise(false);
+  };
+
+  // Iniciar Gravação de Áudio (WAV 16 kHz, formato aceito pela IA)
   const iniciarGravacao = async () => {
+    if (!GravadorWav.suportado()) {
+      alert("Seu navegador não permite gravar áudio. Tente pelo Chrome.");
+      return;
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
+      const gravador = new GravadorWav();
+      gravadorRef.current = gravador;
+      await gravador.iniciar((n) => setNivelMic(Math.min(1, n.rms * 8)));
 
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        const url = URL.createObjectURL(audioBlob);
-        setAudioUrl(url);
-        setRespostasGravadas((prev) => ({ ...prev, [indiceAtual]: url }));
-
-        // Parar faixas de microfone
-        stream.getTracks().forEach((track) => track.stop());
-      };
-
-      recorder.start();
+      limparAnalise(indiceAtual);
+      setRespostasGravadas(({ [indiceAtual]: antiga, ...resto }) => {
+        if (antiga) URL.revokeObjectURL(antiga.url);
+        return resto;
+      });
       setGravando(true);
       setTempoGravacao(0);
-      setAudioUrl(null);
 
       timerRef.current = setInterval(() => {
         setTempoGravacao((prev) => prev + 1);
       }, 1000);
     } catch {
+      gravadorRef.current = null;
       alert("Por favor, permita o acesso ao microfone no seu navegador para gravar a resposta.");
     }
   };
 
   // Parar Gravação
-  const pararGravacao = () => {
-    if (mediaRecorderRef.current && gravando) {
-      mediaRecorderRef.current.stop();
-      setGravando(false);
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+  const pararGravacao = async () => {
+    const gravador = gravadorRef.current;
+    if (!gravador || !gravando) return;
+
+    setGravando(false);
+    setNivelMic(0);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
+
+    const indice = indiceAtual;
+    const final = await gravador.parar();
+    gravadorRef.current = null;
+    setRespostasGravadas((prev) => ({
+      ...prev,
+      [indice]: { url: URL.createObjectURL(final.wav), wav: final.wav, qualidade: final.qualidade },
+    }));
+  };
+
+  // Enviar para análise de pronúncia
+  const analisarPronuncia = async () => {
+    const indice = indiceAtual;
+    const gravacao = respostasGravadas[indice];
+    if (!gravacao || analisando) return;
+
+    if (!sessaoId) {
+      setErrosAnalise((p) => ({ ...p, [indice]: "Sua matrícula na turma não foi encontrada. Avise seu professor." }));
+      return;
+    }
+
+    setAnalisando(true);
+    setAvisoAnalise(false);
+    setErrosAnalise(({ [indice]: _e, ...resto }) => resto);
+
+    try {
+      const form = new FormData();
+      form.append("audio", gravacao.wav, "resposta.wav");
+      form.append("sessao_id", sessaoId);
+      form.append("pergunta_id", perguntas[indice].id);
+
+      const res = await fetch("/api/aluno/respostas/analisar", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Não foi possível analisar.");
+
+      setAnalises((p) => ({ ...p, [indice]: data.analise }));
+    } catch (err: unknown) {
+      setErrosAnalise((p) => ({
+        ...p,
+        [indice]: err instanceof Error ? err.message : "Erro de conexão.",
+      }));
+    } finally {
+      setAnalisando(false);
+    }
+  };
+
+  // Toda resposta gravada precisa ser analisada antes de seguir
+  // (exceto se a análise falhar, para o aluno não ficar travado)
+  const precisaAnalisar = !!audioUrl && !analiseAtual && !erroAnaliseAtual;
+
+  const mudarPergunta = (novoIndice: number) => {
+    setIndiceAtual(novoIndice);
+    setMostrarDica(false);
+    setAvisoAnalise(false);
   };
 
   // Avançar Pergunta
   const proximaPergunta = () => {
+    if (gravando) return;
+    if (precisaAnalisar) {
+      setAvisoAnalise(true);
+      return;
+    }
     if (indiceAtual < perguntas.length - 1) {
-      setIndiceAtual((prev) => prev + 1);
-      setAudioUrl(respostasGravadas[indiceAtual + 1] || null);
-      setMostrarDica(false);
+      mudarPergunta(indiceAtual + 1);
     } else {
       setConcluido(true);
     }
@@ -173,10 +278,8 @@ export default function AlunoAtividadePlayerPage({
 
   // Voltar Pergunta
   const perguntaAnterior = () => {
-    if (indiceAtual > 0) {
-      setIndiceAtual((prev) => prev - 1);
-      setAudioUrl(respostasGravadas[indiceAtual - 1] || null);
-      setMostrarDica(false);
+    if (indiceAtual > 0 && !gravando) {
+      mudarPergunta(indiceAtual - 1);
     }
   };
 
@@ -308,7 +411,7 @@ export default function AlunoAtividadePlayerPage({
 
           {/* Enunciado da Pergunta */}
           <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight mb-2">
-            "{perguntaAtual.enunciado}"
+            &ldquo;{perguntaAtual.enunciado}&rdquo;
           </h2>
 
           {/* Instrução em Português */}
@@ -367,29 +470,204 @@ export default function AlunoAtividadePlayerPage({
                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
                   Gravando... ({tempoGravacao}s) — Fale agora!
                 </p>
+                {/* Medidor de volume do microfone */}
+                <div className="w-40 h-1.5 bg-slate-800 rounded-full overflow-hidden mt-2">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-500 to-rose-500 transition-[width] duration-75"
+                    style={{ width: `${Math.round(nivelMic * 100)}%` }}
+                  />
+                </div>
                 <p className="text-[11px] text-slate-500 mt-1">Clique no quadrado para finalizar.</p>
               </div>
             )}
 
-            {!gravando && audioUrl && (
+            {!gravando && gravacaoAtual && (
               <div className="w-full flex flex-col items-center animate-in fade-in">
-                <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-2">
-                  <CheckCircle2 className="w-6 h-6" />
+                {gravacaoAtual.qualidade.ok ? (
+                  <>
+                    <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-2">
+                      <CheckCircle2 className="w-6 h-6" />
+                    </div>
+                    <p className="text-xs font-bold text-emerald-400 mb-3">Resposta Gravada com Sucesso!</p>
+                  </>
+                ) : (
+                  <div className="w-full max-w-sm mb-3 p-3 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-xl text-xs font-semibold flex items-start gap-2 text-left">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{gravacaoAtual.qualidade.mensagem} Grave novamente.</span>
+                  </div>
+                )}
+                <audio controls src={gravacaoAtual.url} className="w-full max-w-sm mb-4 h-10" />
+
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    id="btn-gravar-novamente"
+                    onClick={iniciarGravacao}
+                    disabled={analisando}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-white bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Gravar Novamente
+                  </button>
+
+                  <button
+                    id="btn-analisar-pronuncia"
+                    onClick={analisarPronuncia}
+                    disabled={analisando || !gravacaoAtual.qualidade.ok}
+                    className={`inline-flex items-center gap-1.5 text-xs font-bold text-white px-4 py-2 rounded-lg transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 shadow-lg shadow-violet-600/30 ${
+                      avisoAnalise ? "ring-2 ring-amber-400 animate-pulse" : ""
+                    }`}
+                  >
+                    {analisando ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Analisando...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        {analiseAtual ? "Analisar de Novo" : "Analisar Pronúncia"}
+                      </>
+                    )}
+                  </button>
                 </div>
-                <p className="text-xs font-bold text-emerald-400 mb-3">
-                  Resposta Gravada com Sucesso!
-                </p>
-                <audio controls src={audioUrl} className="w-full max-w-sm mb-4 h-10" />
-                <button
-                  onClick={iniciarGravacao}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-white bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Gravar Novamente
-                </button>
+
+                {avisoAnalise && (
+                  <p className="text-[11px] font-bold text-amber-400 mt-3">
+                    Antes de continuar, clique em &quot;Analisar Pronúncia&quot;.
+                  </p>
+                )}
+
+                {erroAnaliseAtual && (
+                  <div className="w-full max-w-sm mt-3 p-3 bg-rose-950/60 border border-rose-800 text-rose-300 rounded-xl text-xs font-semibold flex items-start gap-2 text-left">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{erroAnaliseAtual}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
+
+          {/* Resultado da Análise de Pronúncia */}
+          {!gravando && analiseAtual && (
+            <section
+              id="resultado-pronuncia"
+              className="mt-2 bg-slate-950/80 border border-slate-800 rounded-2xl p-5 animate-in fade-in slide-in-from-bottom-2"
+            >
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h3 className="text-sm font-black text-white">Análise da Pronúncia</h3>
+                {analiseAtual.resultado === "good_job" ? (
+                  <span className="inline-flex items-center gap-1.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider">
+                    <Trophy className="w-3.5 h-3.5" />
+                    Good Job!
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 bg-amber-500/15 text-amber-400 border border-amber-500/30 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider">
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Try Again!
+                  </span>
+                )}
+              </div>
+
+              {/* O que foi entendido, com palavras coloridas */}
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">O que entendemos</p>
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {analiseAtual.palavras.length > 0 ? (
+                  analiseAtual.palavras.map((p, i) => (
+                    <span
+                      key={`${p.palavra}-${i}`}
+                      title={p.dica ?? undefined}
+                      className={`px-2 py-1 rounded-lg text-sm font-bold border ${
+                        p.status === "ok"
+                          ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                          : p.status === "atencao"
+                            ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                            : "bg-rose-500/10 text-rose-300 border-rose-500/30 underline decoration-wavy decoration-rose-400"
+                      }`}
+                    >
+                      {p.palavra}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-sm italic text-slate-500">{analiseAtual.transcricao || "(nada compreendido)"}</span>
+                )}
+              </div>
+
+              {/* Notas 1–4 */}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 mb-4">
+                {CRITERIOS.map(({ chave, rotulo }) => {
+                  const valor = analiseAtual[chave] as number;
+                  return (
+                    <div key={chave}>
+                      <div className="flex items-center justify-between text-[11px] font-bold mb-1">
+                        <span className="text-slate-400">{rotulo}</span>
+                        <span className="text-slate-200">{valor}/4</span>
+                      </div>
+                      <div className="flex gap-1">
+                        {[1, 2, 3, 4].map((n) => (
+                          <div
+                            key={n}
+                            className={`h-1.5 flex-1 rounded-full ${n <= valor ? COR_NOTA[valor] : "bg-slate-800"}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Feedback */}
+              <div className="space-y-2 mb-4">
+                <div className="p-3 bg-emerald-950/40 border border-emerald-900/60 rounded-xl text-xs text-emerald-200 flex items-start gap-2">
+                  <ThumbsUp className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span>{analiseAtual.ponto_forte}</span>
+                </div>
+                <div className="p-3 bg-amber-950/30 border border-amber-900/60 rounded-xl text-xs text-amber-200 flex items-start gap-2">
+                  <Target className="w-4 h-4 shrink-0 text-amber-400" />
+                  <span>{analiseAtual.ponto_melhorar}</span>
+                </div>
+              </div>
+
+              {/* Dicas por palavra */}
+              {analiseAtual.palavras.some((p) => p.status !== "ok" && p.dica) && (
+                <div className="mb-4">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Dicas de pronúncia</p>
+                  <ul className="space-y-1.5">
+                    {analiseAtual.palavras
+                      .filter((p) => p.status !== "ok" && p.dica)
+                      .map((p, i) => (
+                        <li key={`dica-${p.palavra}-${i}`} className="text-xs text-slate-300 flex items-start gap-2">
+                          <button
+                            onClick={() => falarPergunta(p.palavra)}
+                            title={`Ouvir "${p.palavra}"`}
+                            className="shrink-0 inline-flex items-center gap-1 font-black text-violet-300 bg-violet-500/10 border border-violet-500/30 px-1.5 py-0.5 rounded-md hover:bg-violet-500/20 cursor-pointer"
+                          >
+                            <Volume2 className="w-3 h-3" />
+                            {p.palavra}
+                          </button>
+                          <span className="pt-0.5">{p.dica}</span>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Frase modelo */}
+              <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Exemplo de resposta</p>
+                  <p className="text-sm font-bold text-white mt-0.5">&quot;{analiseAtual.frase_modelo}&quot;</p>
+                </div>
+                <button
+                  onClick={() => falarPergunta(analiseAtual.frase_modelo)}
+                  disabled={falando}
+                  className="shrink-0 inline-flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                >
+                  <Volume2 className="w-4 h-4" />
+                  Ouvir
+                </button>
+              </div>
+            </section>
+          )}
         </div>
 
         {/* Botões de Navegação */}
