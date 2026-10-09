@@ -227,6 +227,17 @@ export default function AlunoAtividadePlayerPage({
       return;
     }
 
+    const perguntaId = perguntas[indice]?.id;
+    if (!perguntaId) {
+      setErrosAnalise((p) => ({ ...p, [indice]: "Identificador da pergunta não encontrado." }));
+      return;
+    }
+
+    if (!gravacao.wav || gravacao.wav.size === 0) {
+      setErrosAnalise((p) => ({ ...p, [indice]: "O áudio gravado está vazio. Por favor, grave novamente." }));
+      return;
+    }
+
     setAnalisando(true);
     setAvisoAnalise(false);
     setErrosAnalise(({ [indice]: _e, ...resto }) => resto);
@@ -235,11 +246,13 @@ export default function AlunoAtividadePlayerPage({
       const form = new FormData();
       form.append("audio", gravacao.wav, "resposta.wav");
       form.append("sessao_id", sessaoId);
-      form.append("pergunta_id", perguntas[indice].id);
+      form.append("pergunta_id", perguntaId);
 
       const res = await fetch("/api/aluno/respostas/analisar", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Não foi possível analisar.");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Erro ${res.status}: Não foi possível analisar.`);
+      }
 
       setAnalises((p) => ({ ...p, [indice]: data.analise }));
     } catch (err: unknown) {

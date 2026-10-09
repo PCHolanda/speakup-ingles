@@ -26,20 +26,39 @@ export async function POST(request: NextRequest) {
     }
 
     const form = await request.formData();
+    const sessaoIdRaw = form.get("sessao_id");
+    const perguntaIdRaw = form.get("pergunta_id");
+    const audioRaw = form.get("audio");
+
     const campos = camposSchema.safeParse({
-      sessao_id: form.get("sessao_id"),
-      pergunta_id: form.get("pergunta_id"),
+      sessao_id: typeof sessaoIdRaw === "string" ? sessaoIdRaw.trim() : sessaoIdRaw,
+      pergunta_id: typeof perguntaIdRaw === "string" ? perguntaIdRaw.trim() : perguntaIdRaw,
     });
     if (!campos.success) {
-      return NextResponse.json({ error: campos.error.issues[0]?.message }, { status: 400 });
+      console.warn("[analisar] Falha na validação dos campos:", {
+        sessaoIdRaw,
+        perguntaIdRaw,
+        erros: campos.error.issues,
+      });
+      return NextResponse.json(
+        { error: `Dados da requisição inválidos: ${campos.error.issues[0]?.message}` },
+        { status: 400 }
+      );
     }
     const { sessao_id, pergunta_id } = campos.data;
 
-    const audio = form.get("audio");
-    if (!(audio instanceof Blob) || audio.size === 0) {
-      return NextResponse.json({ error: "Áudio não enviado." }, { status: 400 });
+    if (!audioRaw || typeof audioRaw === "string") {
+      console.warn("[analisar] Áudio ausente ou inválido:", typeof audioRaw);
+      return NextResponse.json({ error: "Arquivo de áudio não foi enviado." }, { status: 400 });
     }
-    if (audio.size > MAX_BYTES) {
+
+    const audio = audioRaw as Blob;
+    const tamanho = typeof audio.size === "number" ? audio.size : 0;
+    if (tamanho === 0) {
+      console.warn("[analisar] Áudio com tamanho 0");
+      return NextResponse.json({ error: "O arquivo de áudio enviado está vazio." }, { status: 400 });
+    }
+    if (tamanho > MAX_BYTES) {
       return NextResponse.json({ error: "Áudio grande demais." }, { status: 413 });
     }
 
