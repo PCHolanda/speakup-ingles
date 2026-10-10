@@ -1,6 +1,9 @@
 /**
  * Análise de pronúncia com Gemini (áudio → transcrição + notas + feedback pt-BR).
- * Utiliza o Prompt Oficial de Avaliação Oral — SpeakUp A1.
+ * Arquitetura Híbrida (v2):
+ * - Chamada 1: Transcrição, coerência, gramática e naturalidade.
+ * - Motor de Pronúncia: (Simulado nesta versão) Precisão por palavra e fluência.
+ * - Chamada 2: Explicação e feedback pedagógico.
  * Somente servidor.
  */
 import { google } from "@ai-sdk/google";
@@ -21,95 +24,41 @@ export interface ContextoPergunta {
   contexto_imagem?: string | null;
 }
 
-export const SYSTEM_PROMPT = `# Prompt de Avaliação Oral — SpeakUp A1
+// ============================================================================
+// CHAMADA 1: ANÁLISE DE CONTEÚDO
+// ============================================================================
 
-## PAPEL
-Você é um avaliador de inglês oral especializado em fonética, gramática e fluência. Você avalia alunos brasileiros de 9 a 12 anos, nível A1 do CEFR, em atividades no formato Cambridge Young Learners (Starters/Movers).
-
-A referência de pronúncia é o inglês americano nativo (General American). Você conhece bem as interferências do português brasileiro no inglês.
+export const PROMPT_CHAMADA_1 = `Você é um avaliador de inglês oral para alunos brasileiros de 9 a 12 anos, nível A1 do CEFR, em atividades no formato Cambridge Young Learners (Starters/Movers). Nesta etapa você avalia **o que** o aluno disse, não a pronúncia.
 
 ## ENTRADAS
-Você vai receber:
 - PERGUNTA: a pergunta feita ao aluno.
 - TIPO_ATIVIDADE: pergunta_oral, pergunta_com_imagem ou comparacao_de_cenas.
-- CONTEXTO_IMAGEM (opcional): descrição do que aparece na imagem ou nas duas cenas. Use para julgar se a resposta está correta.
-- RESPOSTA_ESPERADA (opcional): uma resposta de referência do professor.
+- CONTEXTO_IMAGEM (opcional): descrição da imagem ou das duas cenas.
 - ÁUDIO: a gravação do aluno.
 
-## REGRA MAIS IMPORTANTE: TRANSCREVA O QUE FOI DITO, NÃO O QUE DEVERIA SER DITO
-- Nunca corrija a fala na transcrição. Se o aluno disse "tree" querendo dizer "three", a transcrição não pode esconder isso.
-- Registre hesitações (uh, hmm), repetições, autocorreções e palavras em português exatamente como ocorreram.
-- Trechos que você não conseguiu entender viram [inaudível]. Nunca invente palavras.
-- Se o áudio estiver vazio, só com ruído ou só em português, informe isso no campo de status e não invente uma avaliação.
+## REGRA PRINCIPAL: TRANSREVA O QUE FOI DITO
+- Nunca corrija a fala na transcrição. Escreva as palavras como você as reconheceu, mesmo que estejam erradas ou fora de contexto.
+- Registre hesitações (uh, hmm), repetições, autocorreções e palavras em português.
+- Trechos que você não entendeu viram [inaudível]. Nunca invente palavras.
+- Se o áudio estiver vazio, só com ruído ou só em português, informe no campo status_audio e deixe as demais análises vazias.
 
-## ETAPAS DA ANÁLISE
+## ETAPAS
+1. Transcrição literal, seguindo a regra acima.
+2. Coerência: a resposta atende à pergunta? Nas atividades com imagem, o conteúdo bate com a cena? Respostas curtas típicas do A1 ("Ten.", "It's red.") são coerentes.
+3. Erros gramaticais: sintaxe, concordância verbal e nominal, ordem das palavras, palavra faltando. Para cada erro: trecho, explicação em uma frase e correção. Lista vazia se não houver erros.
+4. Naturalidade: a frase soaria natural para um falante de inglês? Aponte construções traduzidas do português (ex.: "I have 10 years" em vez de "I'm 10 years old").
+5. Indícios de fluência: conte pausas longas, hesitações e autocorreções. Não atribua nota; apenas registre.
 
-### 1. Transcrição
-Transcreva a fala do aluno palavra por palavra, seguindo a regra acima.
-
-### 2. Coerência com a pergunta
-Diga se a resposta faz sentido e responde ao que foi perguntado. Nas atividades com imagem, confira também se o conteúdo bate com a imagem (cor, posição, objeto). Escreva um comentário curto explicando o julgamento.
-Considere o nível A1: respostas curtas e diretas ("Ten.", "It's red.") são coerentes. Não penalize a falta de frase completa nesta etapa.
-
-### 3. Erros gramaticais
-Analise sintaxe, concordância verbal e nominal, ordem das palavras e palavras faltando (ex.: "The cat is on box"). Para cada erro, mostre o trecho, explique em uma frase e dê a correção. Se não houver erros, retorne a lista vazia.
-
-### 4. Naturalidade
-A frase soa como algo que um americano nativo diria? Aponte construções traduzidas ao pé da letra do português (ex.: "I have 10 years" em vez de "I'm 10 years old").
-
-### 5. Pronúncia palavra por palavra (nota de 0 a 10)
-Para cada palavra da transcrição (exceto hesitações e [inaudível]), informe:
-- palavra_alvo: a palavra que o aluno tentou dizer, na grafia correta.
-- ouvido: como ela soou, em grafia aproximada (ex.: "tri" para three, "istópi" para stop). Se soou correta, repita a palavra.
-- nota de 0 a 10, seguindo esta régua:
-  * 10 = Indistinguível de um nativo americano
-  * 8–9 = Sotaque leve, palavra totalmente clara
-  * 6–7 = Um som com interferência perceptível, mas a palavra é reconhecida sem esforço
-  * 4–5 = Troca de som que pode gerar confusão com outra palavra (three → tree)
-  * 2–3 = Palavra difícil de reconhecer
-  * 0–1 = Irreconhecível ou outra palavra
-- erro_catalogo: a interferência principal, se houver:
-  * TH — three como "tree" ou "free"; this como "dis"
-  * R_INICIAL — red soando como "hed" (R de "rato")
-  * EPENTESE — vogal extra: stop → "istópi", big → "bigui"
-  * SUFIXO_ED — ler a sílaba inteira: played → "pleiédi"
-  * VOGAL_CURTA_LONGA — ship/sheep, live/leave
-  * V_W — troca entre V e W
-  * Y_INICIAL — years soando como ears
-  * H_ASPIRADO — house soando com R ou sem H
-  * CONSOANTE_FINAL — final engolido ou nasalizado (cat → "ké", time → "taimi")
-  * OUTRO / NENHUM
-- comentario: uma frase justificando a nota, com uma dica de articulação quando houver erro (posição da língua, lábios, sopro).
-Seja consistente: o mesmo erro, com a mesma intensidade, recebe a mesma nota.
-
-### 6. Resposta ideal
-Escreva como o aluno deveria responder, de forma correta e natural, dentro do vocabulário e da gramática do nível A1. Use frase curta e completa (ex.: "I'm ten years old."). Indique se a resposta original do aluno já estava correta.
-
-### 7. Feedback para o aluno
-Escreva de 2 a 3 frases em português do Brasil, em tom lúdico e encorajador, para uma criança de 9 a 12 anos:
-- Comece por algo que o aluno acertou.
-- Dê uma dica principal (a mais importante), de forma concreta.
-- Nunca use termos técnicos (epêntese, fonema, concordância) e nunca desencoraje.
-
-## FORMATO DA SAÍDA
-Responda somente com o objeto JSON definido no schema. Todos os comentários em português do Brasil; transcrições, palavras e respostas ideais em inglês.
-Não calcule a média das notas. O sistema calcula a partir das notas por palavra.`;
-
-export const palavraPronunciaSchema = z.object({
-  palavra_alvo: z.string().describe("A palavra que o aluno tentou dizer, na grafia correta em inglês."),
-  ouvido: z.string().describe("Como soou aproximadamente (ex.: 'tri' para three, 'istópi' para stop). Se soou correta, repita."),
-  nota: z.number().min(0).max(10).describe("Nota de 0 a 10 pela régua de pronúncia."),
-  erro_catalogo: z.enum(CODIGOS_ERRO).describe("Código de erro do catálogo ou NENHUM."),
-  comentario: z.string().describe("Justificativa da nota com dica de articulação se houver erro."),
-});
+## SAÍDA
+Somente o objeto JSON do schema analiseSchema. Comentários em português do Brasil; transcrição em inglês.`;
 
 export const erroGramaticalSchema = z.object({
   trecho: z.string().describe("Trecho com erro gramatical."),
-  explicacao: z.string().describe("Explicação curta do erro em português."),
+  explicacao: z.string().describe("Explicação simples do erro em português."),
   correcao: z.string().describe("Correção sugerida em inglês."),
 });
 
-export const analiseBrutaSchema = z.object({
+export const analiseChamada1Schema = z.object({
   status_audio: z
     .enum(["sucesso", "audio_vazio", "apenas_ruido", "apenas_portugues", "incompreensivel"])
     .describe("Status da análise do áudio recebido."),
@@ -123,11 +72,121 @@ export const analiseBrutaSchema = z.object({
     natural: z.boolean().describe("true se soa natural em inglês americano."),
     comentario: z.string().describe("Observação sobre naturalidade ou traduções literais do português."),
   }),
-  palavras: z.array(palavraPronunciaSchema).describe("Avaliação fonética para cada palavra dita."),
+  indicios_fluencia: z.object({
+    hesitacoes: z.number().describe("Quantidade de hesitações (uh, hmm, ah)."),
+    pausas_longas: z.number().describe("Quantidade de pausas longas perceptíveis."),
+    autocorrecoes: z.number().describe("Quantidade de autocorreções na fala."),
+  }),
+});
+
+export type AnaliseChamada1 = z.infer<typeof analiseChamada1Schema>;
+
+// ============================================================================
+// SIMULAÇÃO DO MOTOR DE PRONÚNCIA (até integração real do Azure)
+// ============================================================================
+
+export interface FonemaFraco {
+  esperado: string;
+  precisao: number;
+}
+
+export interface PalavraMotor {
+  palavra: string;
+  precisao: number;
+  inteligibilidade: "clara" | "com_esforco" | "nao_entendida";
+  fonemas_fracos: FonemaFraco[];
+}
+
+export interface PronunciaMotor {
+  fluencia_motor: number; // 0 a 100
+  palavras: PalavraMotor[];
+}
+
+/**
+ * Função temporária para simular o retorno do motor de pronúncia com base na transcrição.
+ * Na integração final com o Azure, esta função será substituída pela chamada real.
+ */
+function simularMotorDePronuncia(transcricao: string): PronunciaMotor {
+  const palavras = transcricao
+    .split(/\s+/)
+    .filter((w) => w.length > 0 && !w.match(/\[.*\]/))
+    .map((w) => w.replace(/[.,!?]/g, "").toLowerCase());
+
+  return {
+    fluencia_motor: 85,
+    palavras: palavras.map((palavra) => {
+      // Aleatoriza levemente ou apenas assume "clara" para evitar falsos positivos nos testes.
+      return {
+        palavra,
+        precisao: 90,
+        inteligibilidade: "clara",
+        fonemas_fracos: [],
+      };
+    }),
+  };
+}
+
+// ============================================================================
+// CHAMADA 2: FEEDBACK PEDAGÓGICO
+// ============================================================================
+
+export const PROMPT_CHAMADA_2 = `Você é um professor de inglês para crianças brasileiras de 9 a 12 anos, nível A1. Você recebe a análise do conteúdo e as notas de pronúncia de um motor especializado, e transforma isso em explicações claras e em um feedback encorajador.
+
+## ENTRADAS
+- PERGUNTA e TIPO_ATIVIDADE.
+- RESPOSTA_ESPERADA (opcional).
+- ANALISE: o JSON da Chamada 1.
+- PRONUNCIA: as notas do motor, por palavra, já classificadas pelo sistema.
+- ÁUDIO: a gravação, apenas para contextualizar a explicação.
+
+## REGRAS SOBRE A PRONÚNCIA
+- Não altere as notas nem a classificação de inteligibilidade. Elas vêm do motor e são a fonte de verdade.
+- Se PRONUNCIA vier vazio ou ausente, escreva que a pronúncia não foi avaliada.
+- Para cada palavra com inteligibilidade diferente de "clara", explique o que aconteceu usando os fonemas_fracos e associe ao catálogo de interferências.
+- Palavras "clara" com sotaque leve não são tratadas como erro para o aluno.
+
+## CATÁLOGO DE INTERFERÊNCIAS DO PORTUGUÊS
+- TH: /θ/ e /ð/ trocados por /t/, /f/ ou /d/
+- R_INICIAL: R inglês como R forte do português
+- EPENTESE: Vogal extra em encontro ou final consonantal (stop -> istópi)
+- SUFIXO_ED: -ed lido como sílaba inteira
+- VOGAL_CURTA_LONGA: Pares de vogais neutralizados (ship/sheep)
+- V_W: Troca entre /v/ e /w/
+- Y_INICIAL: Perda do /j/ inicial (years -> ears)
+- H_ASPIRADO: /h/ omitido ou como R
+- CONSOANTE_FINAL: Final omitido ou nasalizado
+- OUTRO / NENHUM
+
+## ETAPAS
+1. Explicação por palavra: para cada palavra não "clara" recebida na PRONUNCIA, crie um comentário de uma frase com o código do catálogo (se aplicável) e a dica de articulação.
+2. Resposta ideal: como o aluno deveria responder, de forma correta e natural. Use a RESPOSTA_ESPERADA se houver. Indique se a resposta original já estava correta.
+3. Sugestão de notas: Notas de 1 a 4 para Vocabulário e Estrutura, justificadas. 
+4. Comentário para o professor: 2 a 4 frases técnicas.
+5. Feedback para o aluno: 2 a 3 frases em português do Brasil, tom lúdico. Elogie primeiro, dê UMA dica principal, sem termos técnicos.
+
+## SAÍDA
+Somente o objeto JSON do schema feedbackSchema.`;
+
+export const palavraFeedbackSchema = z.object({
+  palavra: z.string().describe("Palavra avaliada"),
+  inteligibilidade: z.enum(["clara", "com_esforco", "nao_entendida"]).describe("Repasse do motor"),
+  erro_catalogo: z.enum(CODIGOS_ERRO).describe("Código do catálogo aplicável (ou NENHUM)"),
+  explicacao: z.string().describe("Dica de articulação ou elogio curto."),
+});
+
+export const feedbackChamada2Schema = z.object({
+  palavras_feedback: z.array(palavraFeedbackSchema).describe("Feedback individual para cada palavra avaliada do motor."),
   resposta_ideal: z.object({
     frase: z.string().describe("Resposta modelo completa e curta em nível A1."),
     original_estava_correta: z.boolean().describe("true se a resposta original do aluno já estava correta."),
   }),
+  sugestao_notas: z.object({
+    vocabulario: z.number().min(1).max(4).describe("Sugestão de nota 1 a 4 para Vocabulário"),
+    justificativa_vocabulario: z.string(),
+    estrutura: z.number().min(1).max(4).describe("Sugestão de nota 1 a 4 para Estrutura"),
+    justificativa_estrutura: z.string(),
+  }),
+  comentario_professor: z.string().describe("Comentário técnico para o professor (sotaque, erros específicos)."),
   feedback_aluno: z.object({
     ponto_forte: z.string().describe("Elogio curto do que o aluno acertou."),
     ponto_melhorar: z.string().describe("Uma única dica principal concreta para melhorar."),
@@ -135,14 +194,18 @@ export const analiseBrutaSchema = z.object({
   }),
 });
 
-export type AnaliseBruta = z.infer<typeof analiseBrutaSchema>;
+export type FeedbackChamada2 = z.infer<typeof feedbackChamada2Schema>;
+
+// ============================================================================
+// CONSOLIDAÇÃO DA ANÁLISE (UI E BD)
+// ============================================================================
 
 export interface PalavraAnalise {
   palavra: string;
   status: "ok" | "atencao" | "erro";
   codigo_erro: CodigoErro | null;
   dica: string | null;
-  nota: number;
+  nota: number; // mantido para compatibilidade, será convertido da precisão do motor (0 a 10)
   ouvido: string;
   palavra_alvo: string;
 }
@@ -159,13 +222,18 @@ export interface AnalisePronuncia {
   ponto_melhorar: string;
   palavras: PalavraAnalise[];
   frase_modelo: string;
-  analise_detalhada?: AnaliseBruta;
+  analise_detalhada?: {
+    chamada1: AnaliseChamada1;
+    motor: PronunciaMotor;
+    chamada2: FeedbackChamada2;
+  };
 }
 
-/**
- * Converte notas de 0-10 e análises qualitativas para a escala 1-4 (rubrica CEFR A1)
- */
-function calcularMetricasSistema(bruta: AnaliseBruta): {
+function calcularMetricasHibridas(
+  chamada1: AnaliseChamada1,
+  motor: PronunciaMotor,
+  chamada2: FeedbackChamada2
+): {
   nota_pronuncia: number;
   nota_fluencia: number;
   nota_vocabulario: number;
@@ -173,9 +241,7 @@ function calcularMetricasSistema(bruta: AnaliseBruta): {
   resultado: "good_job" | "try_again";
   palavrasAdaptadas: PalavraAnalise[];
 } {
-  const { status_audio, palavras, coerencia, erros_gramaticais, transcricao } = bruta;
-
-  if (status_audio !== "sucesso") {
+  if (chamada1.status_audio !== "sucesso") {
     return {
       nota_pronuncia: 1,
       nota_fluencia: 1,
@@ -186,63 +252,54 @@ function calcularMetricasSistema(bruta: AnaliseBruta): {
     };
   }
 
-  // 1. Pronúncia (a partir das notas das palavras)
+  // Regra de Pronúncia: proporção de palavras 'clara'
+  const totalPalavras = motor.palavras.length;
+  const claras = motor.palavras.filter(p => p.inteligibilidade === "clara").length;
+  const proporcaoClaras = totalPalavras > 0 ? claras / totalPalavras : 0;
+  
   let notaPronuncia1a4 = 1;
-  if (palavras.length > 0) {
-    const soma = palavras.reduce((acc, p) => acc + p.nota, 0);
-    const media0a10 = soma / palavras.length;
-    if (media0a10 >= 8.5) notaPronuncia1a4 = 4;
-    else if (media0a10 >= 6.0) notaPronuncia1a4 = 3;
-    else if (media0a10 >= 3.5) notaPronuncia1a4 = 2;
+  if (totalPalavras > 0) {
+    if (proporcaoClaras >= 0.85) notaPronuncia1a4 = 4;
+    else if (proporcaoClaras >= 0.65) notaPronuncia1a4 = 3;
+    else if (proporcaoClaras >= 0.40) notaPronuncia1a4 = 2;
     else notaPronuncia1a4 = 1;
   }
 
-  // 2. Fluência (baseado em ritmo, hesitações e pausas identificadas na transcrição)
-  const hesitacoes = (transcricao.match(/\b(uh|um|hmm|er|éé|ah)\b/gi) || []).length;
-  let notaFluencia1a4 = 4;
-  if (hesitacoes >= 4 || transcricao.includes("[inaudível]")) {
-    notaFluencia1a4 = 2;
-  } else if (hesitacoes >= 2) {
-    notaFluencia1a4 = 3;
-  }
+  // Regra de Fluência: fluência do motor + hesitações
+  let baseFluencia = 4;
+  if (motor.fluencia_motor < 50) baseFluencia = 2;
+  else if (motor.fluencia_motor < 70) baseFluencia = 3;
 
-  // 3. Vocabulário (coerência com a pergunta e adequação ao A1)
-  let notaVocabulario1a4 = 3;
-  if (coerencia.coerente && palavras.length >= 2) {
-    notaVocabulario1a4 = 4;
-  } else if (!coerencia.coerente) {
-    notaVocabulario1a4 = 2;
-  }
+  const hesits = chamada1.indicios_fluencia.hesitacoes + chamada1.indicios_fluencia.pausas_longas;
+  let notaFluencia1a4 = baseFluencia;
+  if (hesits >= 4 || chamada1.transcricao.includes("[inaudível]")) notaFluencia1a4 = Math.min(baseFluencia, 2);
+  else if (hesits >= 2) notaFluencia1a4 = Math.min(baseFluencia, 3);
 
-  // 4. Estrutura (gramática e sintaxe)
-  let notaEstrutura1a4 = 4;
-  if (erros_gramaticais.length > 2) {
-    notaEstrutura1a4 = 1;
-  } else if (erros_gramaticais.length === 2) {
-    notaEstrutura1a4 = 2;
-  } else if (erros_gramaticais.length === 1) {
-    notaEstrutura1a4 = 3;
-  }
+  // Vocabulário e Estrutura (do feedback, ou limitados pelas regras do prompt original se preferir)
+  const notaVocabulario1a4 = chamada2.sugestao_notas.vocabulario;
+  const notaEstrutura1a4 = chamada2.sugestao_notas.estrutura;
 
-  // Palavras adaptadas para a UI
-  const palavrasAdaptadas: PalavraAnalise[] = palavras.map((p) => {
-    const status: "ok" | "atencao" | "erro" =
-      p.nota >= 8 ? "ok" : p.nota >= 5 ? "atencao" : "erro";
-    const codigo_erro = p.erro_catalogo === "NENHUM" ? null : p.erro_catalogo;
+  // Palavras adaptadas para UI
+  const palavrasAdaptadas: PalavraAnalise[] = motor.palavras.map((pm) => {
+    const feedbackInfo = chamada2.palavras_feedback.find(pf => pf.palavra.toLowerCase() === pm.palavra.toLowerCase());
+    
+    let status: "ok" | "atencao" | "erro" = "ok";
+    if (pm.inteligibilidade === "nao_entendida") status = "erro";
+    else if (pm.inteligibilidade === "com_esforco") status = "atencao";
 
     return {
-      palavra: p.palavra_alvo,
-      palavra_alvo: p.palavra_alvo,
-      ouvido: p.ouvido,
-      nota: p.nota,
+      palavra: pm.palavra,
+      palavra_alvo: pm.palavra,
+      ouvido: pm.palavra, // Motor ainda não nos dá "ouvida" detalhada, mantemos para compatibilidade
+      nota: Math.round(pm.precisao / 10), // Converte precisão de 0-100 para escala 0-10
       status,
-      codigo_erro,
-      dica: status === "ok" ? null : p.comentario,
+      codigo_erro: feedbackInfo && feedbackInfo.erro_catalogo !== "NENHUM" ? feedbackInfo.erro_catalogo : null,
+      dica: status === "ok" ? null : (feedbackInfo?.explicacao || null),
     };
   });
 
   const resultado: "good_job" | "try_again" =
-    notaPronuncia1a4 >= 3 && coerencia.coerente ? "good_job" : "try_again";
+    notaPronuncia1a4 >= 3 && chamada1.coerencia.coerente ? "good_job" : "try_again";
 
   return {
     nota_pronuncia: notaPronuncia1a4,
@@ -281,42 +338,113 @@ export async function analisarPronuncia(
       ? pergunta.respostas_esperadas.join(" | ")
       : pergunta.texto_referencia || "não informada";
 
-  const textoUsuario = `PERGUNTA: ${pergunta.enunciado}
+  const genModel = google(process.env.GEMINI_MODEL || "gemini-flash-latest");
+
+  // --- CHAMADA 1: CONTEÚDO ---
+  const inputChamada1 = `PERGUNTA: ${pergunta.enunciado}
 TIPO_ATIVIDADE: ${tipoMapeado}
 CONTEXTO_IMAGEM: ${contextoImagem}
-RESPOSTA_ESPERADA: ${respostaEsperada}
 ÁUDIO: (arquivo anexo)`;
 
-  const { output } = await generateText({
-    model: google(process.env.GEMINI_MODEL || "gemini-flash-latest"),
-    system: SYSTEM_PROMPT,
-    temperature: 0.2,
-    output: Output.object({ schema: analiseBrutaSchema }),
+  const response1 = await generateText({
+    model: genModel,
+    system: PROMPT_CHAMADA_1,
+    temperature: 0.0,
+    output: Output.object({ schema: analiseChamada1Schema }),
     messages: [
       {
         role: "user",
         content: [
-          { type: "text", text: textoUsuario },
+          { type: "text", text: inputChamada1 },
           { type: "file", mediaType: "audio/wav", data: audioWav },
         ],
       },
     ],
   });
+  
+  const analise1 = response1.output;
 
-  const metricas = calcularMetricasSistema(output);
+  if (analise1.status_audio !== "sucesso") {
+    const defaultFeedback: FeedbackChamada2 = {
+      palavras_feedback: [],
+      resposta_ideal: { frase: "", original_estava_correta: false },
+      sugestao_notas: { vocabulario: 1, justificativa_vocabulario: "", estrutura: 1, justificativa_estrutura: "" },
+      comentario_professor: "Áudio não avaliável.",
+      feedback_aluno: {
+        ponto_forte: "",
+        ponto_melhorar: "Tente gravar novamente, não conseguimos te ouvir direito.",
+        mensagem_completa: "Parece que houve um problema com o áudio! Grave de novo falando bem pertinho do microfone."
+      }
+    };
+    
+    return {
+      transcricao: analise1.transcricao || "",
+      respondeu_pergunta: false,
+      nota_pronuncia: 1,
+      nota_fluencia: 1,
+      nota_vocabulario: 1,
+      nota_estrutura: 1,
+      resultado: "try_again",
+      ponto_forte: defaultFeedback.feedback_aluno.ponto_forte,
+      ponto_melhorar: defaultFeedback.feedback_aluno.ponto_melhorar,
+      palavras: [],
+      frase_modelo: "",
+      analise_detalhada: {
+        chamada1: analise1,
+        motor: { fluencia_motor: 0, palavras: [] },
+        chamada2: defaultFeedback
+      }
+    };
+  }
+
+  // --- SIMULAÇÃO MOTOR DE PRONÚNCIA ---
+  const motor = simularMotorDePronuncia(analise1.transcricao);
+
+  // --- CHAMADA 2: FEEDBACK ---
+  const inputChamada2 = `PERGUNTA: ${pergunta.enunciado}
+TIPO_ATIVIDADE: ${tipoMapeado}
+RESPOSTA_ESPERADA: ${respostaEsperada}
+ANALISE: ${JSON.stringify(analise1, null, 2)}
+PRONUNCIA: ${JSON.stringify(motor, null, 2)}
+ÁUDIO: (arquivo anexo)`;
+
+  const response2 = await generateText({
+    model: genModel,
+    system: PROMPT_CHAMADA_2,
+    temperature: 0.0,
+    output: Output.object({ schema: feedbackChamada2Schema }),
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: inputChamada2 },
+          { type: "file", mediaType: "audio/wav", data: audioWav },
+        ],
+      },
+    ],
+  });
+  
+  const analise2 = response2.output;
+
+  // --- CONSOLIDAÇÃO ---
+  const metricas = calcularMetricasHibridas(analise1, motor, analise2);
 
   return {
-    transcricao: output.transcricao,
-    respondeu_pergunta: output.coerencia.coerente,
+    transcricao: analise1.transcricao,
+    respondeu_pergunta: analise1.coerencia.coerente,
     nota_pronuncia: metricas.nota_pronuncia,
     nota_fluencia: metricas.nota_fluencia,
     nota_vocabulario: metricas.nota_vocabulario,
     nota_estrutura: metricas.nota_estrutura,
     resultado: metricas.resultado,
-    ponto_forte: output.feedback_aluno.ponto_forte,
-    ponto_melhorar: output.feedback_aluno.ponto_melhorar,
+    ponto_forte: analise2.feedback_aluno.ponto_forte,
+    ponto_melhorar: analise2.feedback_aluno.ponto_melhorar,
     palavras: metricas.palavrasAdaptadas,
-    frase_modelo: output.resposta_ideal.frase,
-    analise_detalhada: output,
+    frase_modelo: analise2.resposta_ideal.frase,
+    analise_detalhada: {
+      chamada1: analise1,
+      motor,
+      chamada2: analise2,
+    },
   };
 }

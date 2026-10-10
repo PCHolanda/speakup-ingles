@@ -178,7 +178,7 @@ export async function POST(request: NextRequest) {
     }
     console.error("Erro ao analisar pronúncia:", error);
     return NextResponse.json(
-      { error: "Não conseguimos analisar agora. Tente de novo em instantes." },
+      { error: "Erro interno: " + (error instanceof Error ? error.message : String(error)) },
       { status: 500 }
     );
   }
