@@ -7,7 +7,7 @@
  * Somente servidor.
  */
 import { google } from "@ai-sdk/google";
-import { generateText, Output } from "ai";
+import { generateObject } from "ai";
 import { z } from "zod";
 import { CODIGOS_ERRO, CodigoErro } from "@/lib/catalogo-erros";
 
@@ -50,7 +50,7 @@ export const PROMPT_CHAMADA_1 = `Você é um avaliador de inglês oral para alun
 5. Indícios de fluência: conte pausas longas, hesitações e autocorreções. Não atribua nota; apenas registre.
 
 ## SAÍDA
-Somente o objeto JSON do schema analiseSchema. Comentários em português do Brasil; transcrição em inglês.`;
+Somente o objeto JSON. Comentários em português do Brasil; transcrição em inglês.`;
 
 export const erroGramaticalSchema = z.object({
   trecho: z.string().describe("Trecho com erro gramatical."),
@@ -102,10 +102,6 @@ export interface PronunciaMotor {
   palavras: PalavraMotor[];
 }
 
-/**
- * Função temporária para simular o retorno do motor de pronúncia com base na transcrição.
- * Na integração final com o Azure, esta função será substituída pela chamada real.
- */
 function simularMotorDePronuncia(transcricao: string): PronunciaMotor {
   const palavras = transcricao
     .split(/\s+/)
@@ -115,7 +111,6 @@ function simularMotorDePronuncia(transcricao: string): PronunciaMotor {
   return {
     fluencia_motor: 85,
     palavras: palavras.map((palavra) => {
-      // Aleatoriza levemente ou apenas assume "clara" para evitar falsos positivos nos testes.
       return {
         palavra,
         precisao: 90,
@@ -165,7 +160,7 @@ export const PROMPT_CHAMADA_2 = `Você é um professor de inglês para crianças
 5. Feedback para o aluno: 2 a 3 frases em português do Brasil, tom lúdico. Elogie primeiro, dê UMA dica principal, sem termos técnicos.
 
 ## SAÍDA
-Somente o objeto JSON do schema feedbackSchema.`;
+Somente o objeto JSON.`;
 
 export const palavraFeedbackSchema = z.object({
   palavra: z.string().describe("Palavra avaliada"),
@@ -348,21 +343,22 @@ CONTEXTO_IMAGEM: ${contextoImagem}
 
   const response1 = await generateText({
     model: genModel,
-    system: PROMPT_CHAMADA_1,
+    system: PROMPT_CHAMADA_1 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
     temperature: 0.0,
-    output: Output.object({ schema: analiseChamada1Schema }),
     messages: [
       {
         role: "user",
         content: [
           { type: "text", text: inputChamada1 },
-          { type: "file", mediaType: "audio/wav", data: audioWav },
+          { type: "file", mimeType: "audio/wav", data: audioWav },
         ],
       },
     ],
   });
   
-  const analise1 = response1.output;
+  // Limpa possíveis marcações markdown antes de parsear
+  const textoPuro1 = response1.text.replace(/```json/g, "").replace(/```/g, "").trim();
+  const analise1 = JSON.parse(textoPuro1) as AnaliseChamada1;
 
   if (analise1.status_audio !== "sucesso") {
     const defaultFeedback: FeedbackChamada2 = {
@@ -410,21 +406,21 @@ PRONUNCIA: ${JSON.stringify(motor, null, 2)}
 
   const response2 = await generateText({
     model: genModel,
-    system: PROMPT_CHAMADA_2,
+    system: PROMPT_CHAMADA_2 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
     temperature: 0.0,
-    output: Output.object({ schema: feedbackChamada2Schema }),
     messages: [
       {
         role: "user",
         content: [
           { type: "text", text: inputChamada2 },
-          { type: "file", mediaType: "audio/wav", data: audioWav },
+          { type: "file", mimeType: "audio/wav", data: audioWav },
         ],
       },
     ],
   });
   
-  const analise2 = response2.output;
+  const textoPuro2 = response2.text.replace(/```json/g, "").replace(/```/g, "").trim();
+  const analise2 = JSON.parse(textoPuro2) as FeedbackChamada2;
 
   // --- CONSOLIDAÇÃO ---
   const metricas = calcularMetricasHibridas(analise1, motor, analise2);
