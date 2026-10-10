@@ -338,7 +338,7 @@ export async function analisarPronuncia(
       ? pergunta.respostas_esperadas.join(" | ")
       : pergunta.texto_referencia || "não informada";
 
-  const genModel = google(process.env.GEMINI_MODEL || "gemini-flash-latest");
+  const genModel = google(process.env.GEMINI_MODEL || "gemini-1.5-flash");
 
   // --- CHAMADA 1: CONTEÚDO ---
   const inputChamada1 = `PERGUNTA: ${pergunta.enunciado}
