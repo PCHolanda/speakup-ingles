@@ -138,7 +138,7 @@ export async function POST(request: NextRequest) {
         transcricao: analise.transcricao,
         metricas: {
           qualidade: qualidade.metricas,
-          modelo: process.env.GEMINI_MODEL || "gemini-1.5-flash",
+          modelo: analise.modelo_utilizado || process.env.GEMINI_MODEL || "gemini-2.5-flash",
           ...(analise.analise_detalhada ? { analise_detalhada: analise.analise_detalhada } : {}),
         },
         nota_pronuncia: analise.nota_pronuncia,

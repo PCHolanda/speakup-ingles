@@ -7,7 +7,7 @@
  * Somente servidor.
  */
 import { google } from "@ai-sdk/google";
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import { CODIGOS_ERRO, CodigoErro } from "@/lib/catalogo-erros";
 
@@ -217,6 +217,7 @@ export interface AnalisePronuncia {
   ponto_melhorar: string;
   palavras: PalavraAnalise[];
   frase_modelo: string;
+  modelo_utilizado?: string;
   analise_detalhada?: {
     chamada1: AnaliseChamada1;
     motor: PronunciaMotor;
@@ -306,6 +307,80 @@ function calcularMetricasHibridas(
   };
 }
 
+let modeloValidoCache: string | null = null;
+
+export async function resolverModeloGemini(): Promise<string> {
+  const envModel = process.env.GEMINI_MODEL?.trim().replace(/^models\//, "");
+  // Se houver variável e ela NÃO for um modelo comprovadamente obsoleto (como gemini-1.5-flash / gemini-1.5-flash-latest)
+  if (envModel && !envModel.startsWith("gemini-1.5-flash")) {
+    return envModel;
+  }
+
+  if (modeloValidoCache) {
+    return modeloValidoCache;
+  }
+
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (apiKey) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      if (res.ok) {
+        const data = (await res.json()) as {
+          models?: Array<{ name: string; supportedGenerationMethods?: string[] }>;
+        };
+        if (data.models && Array.isArray(data.models)) {
+          const disponiveis = data.models
+            .filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
+            .map((m) => m.name.replace(/^models\//, ""));
+
+          console.log("[pronuncia] Modelos disponíveis na chave do Gemini:", disponiveis);
+
+          if (envModel && disponiveis.includes(envModel)) {
+            modeloValidoCache = envModel;
+            return envModel;
+          }
+
+          const candidatos = [
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash",
+            "gemini-flash-latest",
+            "gemini-2.5-pro",
+          ];
+
+          for (const cand of candidatos) {
+            if (disponiveis.includes(cand)) {
+              modeloValidoCache = cand;
+              return cand;
+            }
+          }
+
+          const primeiroFlash = disponiveis.find((m) => m.includes("flash"));
+          if (primeiroFlash) {
+            modeloValidoCache = primeiroFlash;
+            return primeiroFlash;
+          }
+
+          if (disponiveis.length > 0) {
+            modeloValidoCache = disponiveis[0];
+            return disponiveis[0];
+          }
+        }
+      } else {
+        const errBody = await res.text();
+        console.warn("[pronuncia] Falha ao consultar ListModels do Google:", res.status, errBody);
+      }
+    } catch (err) {
+      console.warn("[pronuncia] Erro de rede ao consultar ListModels:", err);
+    }
+  }
+
+  modeloValidoCache = "gemini-2.5-flash";
+  return modeloValidoCache;
+}
+
 export async function analisarPronuncia(
   audioWav: Uint8Array,
   pergunta: ContextoPergunta
@@ -333,7 +408,9 @@ export async function analisarPronuncia(
       ? pergunta.respostas_esperadas.join(" | ")
       : pergunta.texto_referencia || "não informada";
 
-  const genModel = google(process.env.GEMINI_MODEL || "gemini-1.5-flash");
+  const modeloNome = await resolverModeloGemini();
+  console.log("[pronuncia] Usando modelo Gemini:", modeloNome);
+  const genModel = google(modeloNome);
 
   // --- CHAMADA 1: CONTEÚDO ---
   const inputChamada1 = `PERGUNTA: ${pergunta.enunciado}
@@ -350,7 +427,7 @@ CONTEXTO_IMAGEM: ${contextoImagem}
         role: "user",
         content: [
           { type: "text", text: inputChamada1 },
-          { type: "file", mimeType: "audio/wav", data: audioWav },
+          { type: "file", mediaType: "audio/wav", data: audioWav },
         ],
       },
     ],
@@ -385,6 +462,7 @@ CONTEXTO_IMAGEM: ${contextoImagem}
       ponto_melhorar: defaultFeedback.feedback_aluno.ponto_melhorar,
       palavras: [],
       frase_modelo: "",
+      modelo_utilizado: modeloNome,
       analise_detalhada: {
         chamada1: analise1,
         motor: { fluencia_motor: 0, palavras: [] },
@@ -413,7 +491,7 @@ PRONUNCIA: ${JSON.stringify(motor, null, 2)}
         role: "user",
         content: [
           { type: "text", text: inputChamada2 },
-          { type: "file", mimeType: "audio/wav", data: audioWav },
+          { type: "file", mediaType: "audio/wav", data: audioWav },
         ],
       },
     ],
@@ -437,6 +515,7 @@ PRONUNCIA: ${JSON.stringify(motor, null, 2)}
     ponto_melhorar: analise2.feedback_aluno.ponto_melhorar,
     palavras: metricas.palavrasAdaptadas,
     frase_modelo: analise2.resposta_ideal.frase,
+    modelo_utilizado: modeloNome,
     analise_detalhada: {
       chamada1: analise1,
       motor,
