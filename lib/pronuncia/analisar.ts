@@ -307,22 +307,21 @@ function calcularMetricasHibridas(
   };
 }
 
-let modeloValidoCache: string | null = null;
+let modelosCandidatosCache: string[] | null = null;
 
-export async function resolverModeloGemini(): Promise<string> {
+export async function obterModelosCandidatos(): Promise<string[]> {
   const envModel = process.env.GEMINI_MODEL?.trim().replace(/^models\//, "");
-  // Se houver variável e ela NÃO for um modelo comprovadamente obsoleto (como 1.5-flash ou 2.5-flash)
-  if (
-    envModel &&
-    !envModel.startsWith("gemini-1.5") &&
-    !envModel.startsWith("gemini-2.0") &&
-    !envModel.startsWith("gemini-2.5")
-  ) {
-    return envModel;
-  }
+  const fallbackList = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash",
+    "gemini-flash-latest",
+  ];
 
-  if (modeloValidoCache) {
-    return modeloValidoCache;
+  if (modelosCandidatosCache && modelosCandidatosCache.length > 0) {
+    return modelosCandidatosCache;
   }
 
   const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -334,7 +333,6 @@ export async function resolverModeloGemini(): Promise<string> {
           models?: Array<{ name: string; supportedGenerationMethods?: string[] }>;
         };
         if (data.models && Array.isArray(data.models)) {
-          // Filtra modelos que suportam generateContent e exclui os que foram descontinuados para novas contas
           const disponiveis = data.models
             .filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
             .map((m) => m.name.replace(/^models\//, ""))
@@ -345,53 +343,83 @@ export async function resolverModeloGemini(): Promise<string> {
                 !name.startsWith("gemini-2.5")
             );
 
-          console.log("[pronuncia] Modelos disponíveis suportados na chave do Gemini:", disponiveis);
-
+          const ordenados: string[] = [];
           if (envModel && disponiveis.includes(envModel)) {
-            modeloValidoCache = envModel;
-            return envModel;
+            ordenados.push(envModel);
           }
 
-          // Prioridades de modelos atuais recomendados pelo Google
-          const candidatos = [
-            "gemini-3.8-flash",
-            "gemini-3.7-flash",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash",
-            "gemini-3.1-flash",
-            "gemini-flash-latest",
-            "gemini-3-flash-preview",
-          ];
-
-          for (const cand of candidatos) {
-            if (disponiveis.includes(cand)) {
-              modeloValidoCache = cand;
-              return cand;
+          for (const cand of fallbackList) {
+            if (disponiveis.includes(cand) && !ordenados.includes(cand)) {
+              ordenados.push(cand);
             }
           }
 
-          const primeiroFlash = disponiveis.find((m) => m.includes("flash"));
-          if (primeiroFlash) {
-            modeloValidoCache = primeiroFlash;
-            return primeiroFlash;
+          // Adiciona quaisquer outros modelos flash disponíveis
+          for (const m of disponiveis) {
+            if (m.includes("flash") && !ordenados.includes(m)) {
+              ordenados.push(m);
+            }
           }
 
-          if (disponiveis.length > 0) {
-            modeloValidoCache = disponiveis[0];
-            return disponiveis[0];
+          if (ordenados.length > 0) {
+            modelosCandidatosCache = ordenados;
+            return ordenados;
           }
         }
-      } else {
-        const errBody = await res.text();
-        console.warn("[pronuncia] Falha ao consultar ListModels do Google:", res.status, errBody);
       }
     } catch (err) {
-      console.warn("[pronuncia] Erro de rede ao consultar ListModels:", err);
+      console.warn("[pronuncia] Erro ao listar modelos do Google:", err);
     }
   }
 
-  modeloValidoCache = "gemini-3.8-flash";
-  return modeloValidoCache;
+  if (envModel && !envModel.startsWith("gemini-1.5") && !envModel.startsWith("gemini-2.0") && !envModel.startsWith("gemini-2.5")) {
+    return [envModel, ...fallbackList.filter((m) => m !== envModel)];
+  }
+
+  modelosCandidatosCache = fallbackList;
+  return fallbackList;
+}
+
+async function executarComFallback(
+  chamadaFn: (genModel: ReturnType<typeof google>, nomeModelo: string) => Promise<{ text: string }>
+): Promise<{ text: string; modeloUsado: string }> {
+  const modelos = await obterModelosCandidatos();
+  let ultimoErro: unknown = null;
+
+  for (const modelo of modelos) {
+    try {
+      const genModel = google(modelo);
+      const res = await chamadaFn(genModel, modelo);
+      return { text: res.text, modeloUsado: modelo };
+    } catch (err: unknown) {
+      ultimoErro = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[pronuncia] Modelo ${modelo} indisponível ou em alta demanda:`, msg);
+
+      const isHighDemandOrLimit =
+        msg.includes("high demand") ||
+        msg.includes("Spikes in demand") ||
+        msg.includes("429") ||
+        msg.includes("503") ||
+        msg.includes("overloaded") ||
+        msg.includes("quota") ||
+        msg.includes("RESOURCE_EXHAUSTED");
+
+      const isDeprecated =
+        msg.includes("not found") ||
+        msg.includes("not supported") ||
+        msg.includes("no longer available");
+
+      if (isHighDemandOrLimit || isDeprecated) {
+        // Tenta o próximo modelo candidato da lista
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw ultimoErro;
 }
 
 export async function analisarPronuncia(
@@ -421,33 +449,34 @@ export async function analisarPronuncia(
       ? pergunta.respostas_esperadas.join(" | ")
       : pergunta.texto_referencia || "não informada";
 
-  const modeloNome = await resolverModeloGemini();
-  console.log("[pronuncia] Usando modelo Gemini:", modeloNome);
-  const genModel = google(modeloNome);
-
-  // --- CHAMADA 1: CONTEÚDO ---
+  // --- CHAMADA 1: CONTEÚDO (COM FALLBACK AUTOMÁTICO ENTRE MODELOS FLASH) ---
   const inputChamada1 = `PERGUNTA: ${pergunta.enunciado}
 TIPO_ATIVIDADE: ${tipoMapeado}
 CONTEXTO_IMAGEM: ${contextoImagem}
 ÁUDIO: (arquivo anexo)`;
 
-  const response1 = await generateText({
-    model: genModel,
-    system: PROMPT_CHAMADA_1 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
-    temperature: 0.0,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: inputChamada1 },
-          { type: "file", mediaType: "audio/wav", data: audioWav },
-        ],
-      },
-    ],
+  const resultado1 = await executarComFallback(async (genModel) => {
+    return await generateText({
+      model: genModel,
+      system: PROMPT_CHAMADA_1 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
+      temperature: 0.0,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: inputChamada1 },
+            { type: "file", mediaType: "audio/wav", data: audioWav },
+          ],
+        },
+      ],
+    });
   });
-  
+
+  const modeloNome = resultado1.modeloUsado;
+  console.log("[pronuncia] Chamada 1 concluída com sucesso usando:", modeloNome);
+
   // Limpa possíveis marcações markdown antes de parsear
-  const textoPuro1 = response1.text.replace(/```json/g, "").replace(/```/g, "").trim();
+  const textoPuro1 = resultado1.text.replace(/```json/g, "").replace(/```/g, "").trim();
   const analise1 = JSON.parse(textoPuro1) as AnaliseChamada1;
 
   if (analise1.status_audio !== "sucesso") {
@@ -487,30 +516,30 @@ CONTEXTO_IMAGEM: ${contextoImagem}
   // --- SIMULAÇÃO MOTOR DE PRONÚNCIA ---
   const motor = simularMotorDePronuncia(analise1.transcricao);
 
-  // --- CHAMADA 2: FEEDBACK ---
+  // --- CHAMADA 2: FEEDBACK PEDAGÓGICO (TEXTO DIRETO, SEM REENVIAR ÁUDIO) ---
   const inputChamada2 = `PERGUNTA: ${pergunta.enunciado}
 TIPO_ATIVIDADE: ${tipoMapeado}
 RESPOSTA_ESPERADA: ${respostaEsperada}
 ANALISE: ${JSON.stringify(analise1, null, 2)}
-PRONUNCIA: ${JSON.stringify(motor, null, 2)}
-ÁUDIO: (arquivo anexo)`;
+PRONUNCIA: ${JSON.stringify(motor, null, 2)}`;
 
-  const response2 = await generateText({
-    model: genModel,
-    system: PROMPT_CHAMADA_2 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
-    temperature: 0.0,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: inputChamada2 },
-          { type: "file", mediaType: "audio/wav", data: audioWav },
-        ],
-      },
-    ],
+  const resultado2 = await executarComFallback(async (genModel) => {
+    return await generateText({
+      model: genModel,
+      system: PROMPT_CHAMADA_2 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
+      temperature: 0.0,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: inputChamada2 },
+          ],
+        },
+      ],
+    });
   });
   
-  const textoPuro2 = response2.text.replace(/```json/g, "").replace(/```/g, "").trim();
+  const textoPuro2 = resultado2.text.replace(/```json/g, "").replace(/```/g, "").trim();
   const analise2 = JSON.parse(textoPuro2) as FeedbackChamada2;
 
   // --- CONSOLIDAÇÃO ---

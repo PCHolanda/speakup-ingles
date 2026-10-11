@@ -176,9 +176,47 @@ export async function POST(request: NextRequest) {
         { status: 503 }
       );
     }
+
     console.error("Erro ao analisar pronúncia:", error);
+
+    const msg = error instanceof Error ? error.message : String(error);
+
+    // Erros de alta demanda ou limite da IA
+    if (
+      msg.includes("high demand") ||
+      msg.includes("Spikes in demand") ||
+      msg.includes("overloaded") ||
+      msg.includes("RESOURCE_EXHAUSTED") ||
+      msg.includes("quota") ||
+      msg.includes("429") ||
+      msg.includes("503")
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "A inteligência artificial está com alta demanda momentânea. Por favor, aguarde alguns segundos e clique em 'Analisar Pronúncia' novamente!",
+        },
+        { status: 503 }
+      );
+    }
+
+    // Timeout ou tempo limite excedido
+    if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("504")) {
+      return NextResponse.json(
+        {
+          error:
+            "A análise demorou mais do que o esperado. Por favor, tente gravar sua resposta novamente!",
+        },
+        { status: 504 }
+      );
+    }
+
+    // Erro genérico amigável para o aluno
     return NextResponse.json(
-      { error: "Erro interno: " + (error instanceof Error ? error.message : String(error)) },
+      {
+        error:
+          "Não conseguimos analisar seu áudio neste momento. Por favor, tente de novo em instantes!",
+      },
       { status: 500 }
     );
   }
