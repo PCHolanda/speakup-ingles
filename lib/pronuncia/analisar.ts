@@ -311,8 +311,13 @@ let modeloValidoCache: string | null = null;
 
 export async function resolverModeloGemini(): Promise<string> {
   const envModel = process.env.GEMINI_MODEL?.trim().replace(/^models\//, "");
-  // Se houver variável e ela NÃO for um modelo comprovadamente obsoleto (como gemini-1.5-flash / gemini-1.5-flash-latest)
-  if (envModel && !envModel.startsWith("gemini-1.5-flash")) {
+  // Se houver variável e ela NÃO for um modelo comprovadamente obsoleto (como 1.5-flash ou 2.5-flash)
+  if (
+    envModel &&
+    !envModel.startsWith("gemini-1.5") &&
+    !envModel.startsWith("gemini-2.0") &&
+    !envModel.startsWith("gemini-2.5")
+  ) {
     return envModel;
   }
 
@@ -329,25 +334,33 @@ export async function resolverModeloGemini(): Promise<string> {
           models?: Array<{ name: string; supportedGenerationMethods?: string[] }>;
         };
         if (data.models && Array.isArray(data.models)) {
+          // Filtra modelos que suportam generateContent e exclui os que foram descontinuados para novas contas
           const disponiveis = data.models
             .filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
-            .map((m) => m.name.replace(/^models\//, ""));
+            .map((m) => m.name.replace(/^models\//, ""))
+            .filter(
+              (name) =>
+                !name.startsWith("gemini-1.5") &&
+                !name.startsWith("gemini-2.0") &&
+                !name.startsWith("gemini-2.5")
+            );
 
-          console.log("[pronuncia] Modelos disponíveis na chave do Gemini:", disponiveis);
+          console.log("[pronuncia] Modelos disponíveis suportados na chave do Gemini:", disponiveis);
 
           if (envModel && disponiveis.includes(envModel)) {
             modeloValidoCache = envModel;
             return envModel;
           }
 
+          // Prioridades de modelos atuais recomendados pelo Google
           const candidatos = [
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash",
+            "gemini-3.8-flash",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
             "gemini-3.5-flash",
             "gemini-3.1-flash",
             "gemini-flash-latest",
-            "gemini-2.5-pro",
+            "gemini-3-flash-preview",
           ];
 
           for (const cand of candidatos) {
@@ -377,7 +390,7 @@ export async function resolverModeloGemini(): Promise<string> {
     }
   }
 
-  modeloValidoCache = "gemini-2.5-flash";
+  modeloValidoCache = "gemini-3.8-flash";
   return modeloValidoCache;
 }
 
