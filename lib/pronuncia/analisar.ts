@@ -84,7 +84,7 @@ export const erroGramaticalSchema = z.object({
 
 export const analiseChamada1Schema = z.object({
   status_audio: z
-    .enum(["sucesso", "audio_vazio", "apenas_ruido", "apenas_portugues", "incompreensivel"])
+    .enum(["ok", "sucesso", "audio_vazio", "apenas_ruido", "apenas_portugues", "incompreensivel"])
     .describe("Status da análise do áudio recebido."),
   transcricao: z.string().describe("O que o aluno realmente disse, palavra por palavra."),
   coerencia: z.object({
@@ -287,7 +287,8 @@ function calcularMetricasHibridas(
   resultado: "good_job" | "try_again";
   palavrasAdaptadas: PalavraAnalise[];
 } {
-  if (chamada1.status_audio !== "sucesso") {
+  const isStatusOk = chamada1.status_audio === "ok" || chamada1.status_audio === "sucesso";
+  if (!isStatusOk) {
     return {
       nota_pronuncia: 1,
       nota_fluencia: 1,
@@ -300,9 +301,9 @@ function calcularMetricasHibridas(
 
   // Regra de Pronúncia: proporção de palavras 'clara'
   const totalPalavras = motor.palavras.length;
-  const claras = motor.palavras.filter(p => p.inteligibilidade === "clara").length;
+  const claras = motor.palavras.filter((p) => p.inteligibilidade === "clara").length;
   const proporcaoClaras = totalPalavras > 0 ? claras / totalPalavras : 0;
-  
+
   let notaPronuncia1a4 = 1;
   if (totalPalavras > 0) {
     if (proporcaoClaras >= 0.85) notaPronuncia1a4 = 4;
@@ -316,19 +317,26 @@ function calcularMetricasHibridas(
   if (motor.fluencia_motor < 50) baseFluencia = 2;
   else if (motor.fluencia_motor < 70) baseFluencia = 3;
 
-  const hesits = chamada1.indicios_fluencia.hesitacoes + chamada1.indicios_fluencia.pausas_longas;
+  const hesits =
+    (chamada1.indicios_fluencia?.hesitacoes ?? 0) +
+    (chamada1.indicios_fluencia?.pausas_longas ?? 0);
   let notaFluencia1a4 = baseFluencia;
-  if (hesits >= 4 || chamada1.transcricao.includes("[inaudível]")) notaFluencia1a4 = Math.min(baseFluencia, 2);
-  else if (hesits >= 2) notaFluencia1a4 = Math.min(baseFluencia, 3);
+  if (hesits >= 4 || (chamada1.transcricao && chamada1.transcricao.includes("[inaudível]"))) {
+    notaFluencia1a4 = Math.min(baseFluencia, 2);
+  } else if (hesits >= 2) {
+    notaFluencia1a4 = Math.min(baseFluencia, 3);
+  }
 
   // Vocabulário e Estrutura (do feedback, ou limitados pelas regras do prompt original se preferir)
-  const notaVocabulario1a4 = chamada2.sugestao_notas.vocabulario;
-  const notaEstrutura1a4 = chamada2.sugestao_notas.estrutura;
+  const notaVocabulario1a4 = chamada2.sugestao_notas?.vocabulario ?? 4;
+  const notaEstrutura1a4 = chamada2.sugestao_notas?.estrutura ?? 4;
 
   // Palavras adaptadas para UI
   const palavrasAdaptadas: PalavraAnalise[] = motor.palavras.map((pm) => {
-    const feedbackInfo = chamada2.palavras_feedback.find(pf => pf.palavra.toLowerCase() === pm.palavra.toLowerCase());
-    
+    const feedbackInfo = (chamada2.palavras_feedback || []).find(
+      (pf) => pf.palavra.toLowerCase() === pm.palavra.toLowerCase()
+    );
+
     let status: "ok" | "atencao" | "erro" = "ok";
     if (pm.inteligibilidade === "nao_entendida") status = "erro";
     else if (pm.inteligibilidade === "com_esforco") status = "atencao";
@@ -336,8 +344,8 @@ function calcularMetricasHibridas(
     return {
       palavra: pm.palavra,
       palavra_alvo: pm.palavra,
-      ouvido: pm.palavra, // Motor ainda não nos dá "ouvida" detalhada, mantemos para compatibilidade
-      nota: Math.round(pm.precisao / 10), // Converte precisão de 0-100 para escala 0-10
+      ouvido: pm.palavra,
+      nota: Math.round(pm.precisao / 10),
       status,
       codigo_erro: feedbackInfo && feedbackInfo.erro_catalogo !== "NENHUM" ? feedbackInfo.erro_catalogo : null,
       dica: status === "ok" ? null : (feedbackInfo?.explicacao || null),
@@ -345,7 +353,7 @@ function calcularMetricasHibridas(
   });
 
   const resultado: "good_job" | "try_again" =
-    notaPronuncia1a4 >= 3 && chamada1.coerencia.coerente ? "good_job" : "try_again";
+    notaPronuncia1a4 >= 3 && (chamada1.coerencia?.coerente ?? false) ? "good_job" : "try_again";
 
   return {
     nota_pronuncia: notaPronuncia1a4,
