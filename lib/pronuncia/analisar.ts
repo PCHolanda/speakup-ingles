@@ -10,6 +10,7 @@ import { google } from "@ai-sdk/google";
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import { CODIGOS_ERRO, CodigoErro } from "@/lib/catalogo-erros";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export class ConfigIAAusenteError extends Error {}
 
@@ -365,9 +366,66 @@ function calcularMetricasHibridas(
   };
 }
 
-let modeloAtivoCache: string = "gemini-3.8-flash";
+export const MODELOS_RECOMENDADOS = [
+  {
+    id: "gemini-3.8-flash",
+    nome: "Gemini 3.8 Flash",
+    descricao: "Recomendado oficial (Mais rápido, multimodal moderno e econômico)",
+  },
+  {
+    id: "gemini-3.7-flash",
+    nome: "Gemini 3.7 Flash",
+    descricao: "Alternativa estável de alta velocidade",
+  },
+  {
+    id: "gemini-3.6-flash",
+    nome: "Gemini 3.6 Flash",
+    descricao: "Versão compacta e rápida para áudio",
+  },
+  {
+    id: "gemini-3.5-flash",
+    nome: "Gemini 3.5 Flash",
+    descricao: "Modelo anterior otimizado para tarefas em tempo real",
+  },
+  {
+    id: "gemini-flash-latest",
+    nome: "Gemini Flash Latest",
+    descricao: "Apelido dinâmico para a versão mais recente",
+  },
+];
 
-export function obterModelosCandidatos(): string[] {
+let modeloAtivoCache: string = "gemini-3.8-flash";
+let ultimoFetchConfig = 0;
+
+export function atualizarModeloAtivoCache(modelo: string) {
+  modeloAtivoCache = modelo.replace(/^models\//, "").trim();
+  ultimoFetchConfig = Date.now();
+}
+
+export async function obterModeloConfigurado(): Promise<string> {
+  const agora = Date.now();
+  // Cache de 30 segundos em memória para evitar chamadas excessivas ao banco
+  if (agora - ultimoFetchConfig < 30000 && modeloAtivoCache) {
+    return modeloAtivoCache;
+  }
+
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("configuracoes")
+      .select("valor")
+      .eq("chave", "gemini_model")
+      .maybeSingle();
+
+    if (!error && data?.valor) {
+      modeloAtivoCache = data.valor.trim();
+      ultimoFetchConfig = agora;
+      return modeloAtivoCache;
+    }
+  } catch (err) {
+    console.warn("[pronuncia] Aviso ao ler configuracoes do banco:", err);
+  }
+
   const envModel = process.env.GEMINI_MODEL?.trim().replace(/^models\//, "");
   if (
     envModel &&
@@ -375,17 +433,23 @@ export function obterModelosCandidatos(): string[] {
     !envModel.startsWith("gemini-2.0") &&
     !envModel.startsWith("gemini-2.5")
   ) {
-    return [envModel, "gemini-3.8-flash", "gemini-3.7-flash"];
+    modeloAtivoCache = envModel;
   }
 
-  // Tenta o modelo ativo recente primeiro, com fallbacks imediatos
-  return Array.from(new Set([modeloAtivoCache, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash"]));
+  return modeloAtivoCache;
+}
+
+export async function obterModelosCandidatos(): Promise<string[]> {
+  const modeloConfigurado = await obterModeloConfigurado();
+  return Array.from(
+    new Set([modeloConfigurado, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash"])
+  );
 }
 
 async function executarComFallback(
   chamadaFn: (genModel: ReturnType<typeof google>, nomeModelo: string) => Promise<{ text: string }>
 ): Promise<{ text: string; modeloUsado: string }> {
-  const modelos = obterModelosCandidatos().slice(0, 3);
+  const modelos = (await obterModelosCandidatos()).slice(0, 3);
   let ultimoErro: unknown = null;
 
   for (const modelo of modelos) {

@@ -23,6 +23,10 @@ import {
   ChevronRight,
   ShieldCheck,
   Sparkles,
+  Bot,
+  Cpu,
+  Zap,
+  Loader2,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -55,7 +59,7 @@ interface Aluno {
 
 export default function AdminDashboardPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<"turmas" | "alunos" | "professores">("alunos");
+  const [tab, setTab] = useState<"turmas" | "alunos" | "professores" | "ia">("alunos");
   
   // Dados do sistema
   const [professores, setProfessores] = useState<Professor[]>([]);
@@ -63,6 +67,15 @@ export default function AdminDashboardPage() {
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
+
+  // Configuração do Modelo de IA
+  const [modeloIa, setModeloIa] = useState("gemini-3.8-flash");
+  const [modelosRecomendados, setModelosRecomendados] = useState<Array<{ id: string; nome: string; descricao: string }>>([]);
+  const [temApiKey, setTemApiKey] = useState(true);
+  const [tabelaExiste, setTabelaExiste] = useState(true);
+  const [salvandoModelo, setSalvandoModelo] = useState(false);
+  const [testandoModelo, setTestandoModelo] = useState(false);
+  const [resultadoTeste, setResultadoTeste] = useState<{ sucesso: boolean; mensagem: string } | null>(null);
 
   // Mensagens
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
@@ -93,12 +106,24 @@ export default function AdminDashboardPage() {
     setCarregando(true);
     setMensagemErro(null);
     try {
-      const res = await fetch("/api/admin/dados");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Erro ao buscar dados");
+      const [resDados, resConfig] = await Promise.all([
+        fetch("/api/admin/dados"),
+        fetch("/api/admin/configuracoes").catch(() => null),
+      ]);
+
+      const data = await resDados.json();
+      if (!resDados.ok) throw new Error(data.error || "Erro ao buscar dados");
       setProfessores(data.professores || []);
       setTurmas(data.turmas || []);
       setAlunos(data.alunos || []);
+
+      if (resConfig && resConfig.ok) {
+        const configData = await resConfig.json();
+        if (configData.modelo_atual) setModeloIa(configData.modelo_atual);
+        if (configData.modelos_recomendados) setModelosRecomendados(configData.modelos_recomendados);
+        if (configData.tem_api_key !== undefined) setTemApiKey(configData.tem_api_key);
+        if (configData.tabela_existe !== undefined) setTabelaExiste(configData.tabela_existe);
+      }
       
       // Auto-selecionar primeiro professor e turma se vazios
       if (data.professores?.length > 0 && !turmaProfId) {
@@ -112,6 +137,61 @@ export default function AdminDashboardPage() {
       setMensagemErro(msg);
     } finally {
       setCarregando(false);
+    }
+  };
+
+  const handleSalvarModelo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modeloIa.trim()) return;
+    setSalvandoModelo(true);
+    setMensagemErro(null);
+    setResultadoTeste(null);
+    try {
+      const res = await fetch("/api/admin/configuracoes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelo: modeloIa.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao salvar modelo");
+      exibirSucesso(`Modelo "${data.modelo}" salvo e ativado com sucesso para avaliações!`);
+      setTabelaExiste(true);
+    } catch (err: unknown) {
+      setMensagemErro(err instanceof Error ? err.message : "Erro ao salvar modelo");
+    } finally {
+      setSalvandoModelo(false);
+    }
+  };
+
+  const handleTestarModelo = async () => {
+    if (!modeloIa.trim()) return;
+    setTestandoModelo(true);
+    setResultadoTeste(null);
+    try {
+      const res = await fetch("/api/admin/configuracoes/testar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelo: modeloIa.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.sucesso) {
+        setResultadoTeste({
+          sucesso: false,
+          mensagem: data.erro || "Falha ao testar modelo.",
+        });
+      } else {
+        setResultadoTeste({
+          sucesso: true,
+          mensagem: `Conexão bem-sucedida! O modelo respondeu perfeitamente em ${data.tempo_ms}ms.`,
+        });
+      }
+    } catch (err: unknown) {
+      setResultadoTeste({
+        sucesso: false,
+        mensagem: err instanceof Error ? err.message : "Erro ao conectar com a IA.",
+      });
+    } finally {
+      setTestandoModelo(false);
     }
   };
 
@@ -376,10 +456,10 @@ export default function AdminDashboardPage() {
         )}
 
         {/* Tab Selector */}
-        <div className="flex items-center gap-2 p-1.5 bg-slate-900 border border-slate-800 rounded-2xl mb-8 w-full max-w-md mx-auto sm:mx-0">
+        <div className="flex items-center gap-2 p-1.5 bg-slate-900 border border-slate-800 rounded-2xl mb-8 w-full max-w-2xl mx-auto sm:mx-0">
           <button
             onClick={() => setTab("alunos")}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
               tab === "alunos"
                 ? "bg-blue-600 text-white shadow-lg shadow-blue-600/30"
                 : "text-slate-400 hover:text-white"
@@ -391,7 +471,7 @@ export default function AdminDashboardPage() {
 
           <button
             onClick={() => setTab("turmas")}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
               tab === "turmas"
                 ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
                 : "text-slate-400 hover:text-white"
@@ -403,7 +483,7 @@ export default function AdminDashboardPage() {
 
           <button
             onClick={() => setTab("professores")}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
               tab === "professores"
                 ? "bg-purple-600 text-white shadow-lg shadow-purple-600/30"
                 : "text-slate-400 hover:text-white"
@@ -411,6 +491,18 @@ export default function AdminDashboardPage() {
           >
             <GraduationCap className="w-4 h-4" />
             Docentes
+          </button>
+
+          <button
+            onClick={() => setTab("ia")}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+              tab === "ia"
+                ? "bg-fuchsia-600 text-white shadow-lg shadow-fuchsia-600/30"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <Bot className="w-4 h-4" />
+            Modelo IA
           </button>
         </div>
 
@@ -883,6 +975,237 @@ export default function AdminDashboardPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* ABA 4: CONFIGURAÇÃO DO MODELO DE IA                                       */}
+        {/* ========================================================================= */}
+        {tab === "ia" && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            {/* Painel Esquerdo: Status da IA */}
+            <div className="lg:col-span-4 space-y-6">
+              <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl">
+                <div className="flex items-center gap-2.5 mb-5 pb-4 border-b border-slate-800">
+                  <div className="w-9 h-9 rounded-xl bg-fuchsia-500/20 text-fuchsia-400 flex items-center justify-center">
+                    <Cpu className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white text-base">Status do Provedor de IA</h3>
+                    <p className="text-xs text-slate-400">Google Generative AI (Gemini)</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Chave de API</p>
+                      <p className="text-sm font-semibold text-slate-200 mt-0.5">GOOGLE_GENERATIVE_AI_API_KEY</p>
+                    </div>
+                    {temApiKey ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        <Check className="w-3.5 h-3.5" />
+                        Configurada
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        Ausente
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Modelo Ativo no Momento</p>
+                    <p className="text-base font-black text-fuchsia-400 font-mono mt-1 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-fuchsia-400 shrink-0" />
+                      {modeloIa}
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Persistência no Banco</p>
+                      <p className="text-xs text-slate-400 mt-0.5">Tabela Supabase &apos;configuracoes&apos;</p>
+                    </div>
+                    {tabelaExiste ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        Ativa
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                        Criar Tabela
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {!tabelaExiste && (
+                <div className="p-5 bg-amber-950/40 border border-amber-800/60 rounded-3xl text-xs text-amber-200 space-y-2">
+                  <p className="font-bold flex items-center gap-1.5 text-amber-300">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    Tabela de Configuração
+                  </p>
+                  <p className="text-slate-300 leading-relaxed">
+                    Para que a alteração seja gravada no banco permanentemente entre reinicializações, execute o script SQL da migração 004 no SQL Editor do Supabase.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`create table if not exists configuracoes (
+  chave text primary key,
+  valor text not null,
+  descricao text,
+  updated_at timestamptz default now()
+);
+insert into configuracoes (chave, valor) values ('gemini_model', '${modeloIa}') on conflict do nothing;`);
+                      exibirSucesso("Script SQL copiado para a área de transferência!");
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 rounded-xl font-bold transition-all cursor-pointer mt-1"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    Copiar SQL de Criação
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Painel Direito: Configuração e Teste */}
+            <div className="lg:col-span-8 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl">
+              <div className="mb-6 pb-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                    <Bot className="w-5 h-5 text-fuchsia-400" />
+                    Configurar Modelo de Inteligência Artificial
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Defina qual versão do Google Gemini processará as avaliações de áudio e feedback dos alunos.
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleSalvarModelo} className="space-y-6">
+                {/* Seleção de Modelos Rápidos */}
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+                    Modelos Recomendados (Clique para selecionar)
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {modelosRecomendados.map((mod) => {
+                      const selecionado = modeloIa === mod.id;
+                      return (
+                        <button
+                          key={mod.id}
+                          type="button"
+                          onClick={() => {
+                            setModeloIa(mod.id);
+                            setResultadoTeste(null);
+                          }}
+                          className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative ${
+                            selecionado
+                              ? "bg-fuchsia-950/40 border-fuchsia-500 text-white shadow-lg shadow-fuchsia-500/10 ring-1 ring-fuchsia-500/50"
+                              : "bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700 hover:bg-slate-950"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="font-bold text-sm text-white">{mod.nome}</span>
+                            {selecionado && (
+                              <span className="w-5 h-5 rounded-full bg-fuchsia-500 text-white flex items-center justify-center">
+                                <Check className="w-3 h-3 stroke-[3]" />
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-400 leading-relaxed">{mod.descricao}</p>
+                          <span className="inline-block mt-2 font-mono text-[11px] text-fuchsia-300/80 bg-fuchsia-500/10 px-2 py-0.5 rounded-md border border-fuchsia-500/20">
+                            {mod.id}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Input de Modelo Personalizado */}
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                    Identificador do Modelo (ID exato da API Google)
+                  </label>
+                  <input
+                    type="text"
+                    value={modeloIa}
+                    onChange={(e) => {
+                      setModeloIa(e.target.value);
+                      setResultadoTeste(null);
+                    }}
+                    placeholder="ex: gemini-3.8-flash"
+                    className="w-full h-12 px-4 text-sm font-mono bg-slate-950 rounded-xl border border-slate-700 text-white placeholder-slate-500 focus:border-fuchsia-500 focus:outline-none focus:ring-1 focus:ring-fuchsia-500"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1.5">
+                    Você pode selecionar um modelo recomendado acima ou digitar qualquer modelo suportado pela sua chave do Google AI Studio.
+                  </p>
+                </div>
+
+                {/* Feedback do Teste */}
+                {resultadoTeste && (
+                  <div
+                    className={`p-4 rounded-2xl border text-xs flex items-start gap-3 animate-in fade-in slide-in-from-top-2 ${
+                      resultadoTeste.sucesso
+                        ? "bg-emerald-950/50 border-emerald-800 text-emerald-200"
+                        : "bg-rose-950/50 border-rose-800 text-rose-200"
+                    }`}
+                  >
+                    {resultadoTeste.sucesso ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    )}
+                    <span className="font-semibold leading-relaxed">{resultadoTeste.mensagem}</span>
+                  </div>
+                )}
+
+                {/* Botões de Ação */}
+                <div className="flex flex-wrap items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleTestarModelo}
+                    disabled={testandoModelo || !modeloIa.trim()}
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:border-slate-600"
+                  >
+                    {testandoModelo ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-fuchsia-400" />
+                        Testando Conexão...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-4 h-4 text-amber-400" />
+                        Testar Modelo em Tempo Real
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={salvandoModelo || !modeloIa.trim()}
+                    className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-indigo-600 hover:from-fuchsia-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-fuchsia-600/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
+                  >
+                    {salvandoModelo ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Salvando Configuração...
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Salvar e Ativar Modelo
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
