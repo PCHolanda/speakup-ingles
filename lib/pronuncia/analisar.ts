@@ -365,94 +365,39 @@ function calcularMetricasHibridas(
   };
 }
 
-let modelosCandidatosCache: string[] | null = null;
+let modeloAtivoCache: string = "gemini-3.8-flash";
 
-export async function obterModelosCandidatos(): Promise<string[]> {
+export function obterModelosCandidatos(): string[] {
   const envModel = process.env.GEMINI_MODEL?.trim().replace(/^models\//, "");
-  const fallbackList = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash",
-    "gemini-flash-latest",
-  ];
-
-  if (modelosCandidatosCache && modelosCandidatosCache.length > 0) {
-    return modelosCandidatosCache;
+  if (
+    envModel &&
+    !envModel.startsWith("gemini-1.5") &&
+    !envModel.startsWith("gemini-2.0") &&
+    !envModel.startsWith("gemini-2.5")
+  ) {
+    return [envModel, "gemini-3.8-flash", "gemini-3.7-flash"];
   }
 
-  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-  if (apiKey) {
-    try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-      if (res.ok) {
-        const data = (await res.json()) as {
-          models?: Array<{ name: string; supportedGenerationMethods?: string[] }>;
-        };
-        if (data.models && Array.isArray(data.models)) {
-          const disponiveis = data.models
-            .filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
-            .map((m) => m.name.replace(/^models\//, ""))
-            .filter(
-              (name) =>
-                !name.startsWith("gemini-1.5") &&
-                !name.startsWith("gemini-2.0") &&
-                !name.startsWith("gemini-2.5")
-            );
-
-          const ordenados: string[] = [];
-          if (envModel && disponiveis.includes(envModel)) {
-            ordenados.push(envModel);
-          }
-
-          for (const cand of fallbackList) {
-            if (disponiveis.includes(cand) && !ordenados.includes(cand)) {
-              ordenados.push(cand);
-            }
-          }
-
-          // Adiciona quaisquer outros modelos flash disponíveis
-          for (const m of disponiveis) {
-            if (m.includes("flash") && !ordenados.includes(m)) {
-              ordenados.push(m);
-            }
-          }
-
-          if (ordenados.length > 0) {
-            modelosCandidatosCache = ordenados;
-            return ordenados;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("[pronuncia] Erro ao listar modelos do Google:", err);
-    }
-  }
-
-  if (envModel && !envModel.startsWith("gemini-1.5") && !envModel.startsWith("gemini-2.0") && !envModel.startsWith("gemini-2.5")) {
-    return [envModel, ...fallbackList.filter((m) => m !== envModel)];
-  }
-
-  modelosCandidatosCache = fallbackList;
-  return fallbackList;
+  // Tenta o modelo ativo recente primeiro, com fallbacks imediatos
+  return Array.from(new Set([modeloAtivoCache, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash"]));
 }
 
 async function executarComFallback(
   chamadaFn: (genModel: ReturnType<typeof google>, nomeModelo: string) => Promise<{ text: string }>
 ): Promise<{ text: string; modeloUsado: string }> {
-  const modelos = await obterModelosCandidatos();
+  const modelos = obterModelosCandidatos().slice(0, 3);
   let ultimoErro: unknown = null;
 
   for (const modelo of modelos) {
     try {
       const genModel = google(modelo);
       const res = await chamadaFn(genModel, modelo);
+      modeloAtivoCache = modelo; // Memoriza o modelo bem-sucedido
       return { text: res.text, modeloUsado: modelo };
     } catch (err: unknown) {
       ultimoErro = err;
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[pronuncia] Modelo ${modelo} indisponível ou em alta demanda:`, msg);
+      console.warn(`[pronuncia] Falha com modelo ${modelo}:`, msg);
 
       const isHighDemandOrLimit =
         msg.includes("high demand") ||
@@ -463,13 +408,15 @@ async function executarComFallback(
         msg.includes("quota") ||
         msg.includes("RESOURCE_EXHAUSTED");
 
-      const isDeprecated =
+      const isDeprecatedOrTimeout =
         msg.includes("not found") ||
         msg.includes("not supported") ||
-        msg.includes("no longer available");
+        msg.includes("no longer available") ||
+        msg.includes("AbortError") ||
+        msg.includes("timeout") ||
+        msg.includes("timed out");
 
-      if (isHighDemandOrLimit || isDeprecated) {
-        // Tenta o próximo modelo candidato da lista
+      if (isHighDemandOrLimit || isDeprecatedOrTimeout) {
         continue;
       }
 
@@ -518,6 +465,8 @@ CONTEXTO_IMAGEM: ${contextoImagem}
       model: genModel,
       system: PROMPT_CHAMADA_1 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
       temperature: 0.0,
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(10000),
       messages: [
         {
           role: "user",
@@ -611,6 +560,8 @@ PRONUNCIA: ${JSON.stringify(motor, null, 2)}`;
       model: genModel,
       system: PROMPT_CHAMADA_2 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
       temperature: 0.0,
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(7000),
       messages: [
         {
           role: "user",
