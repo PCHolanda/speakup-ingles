@@ -49,8 +49,32 @@ export const PROMPT_CHAMADA_1 = `Você é um avaliador de inglês oral para alun
 4. Naturalidade: a frase soaria natural para um falante de inglês? Aponte construções traduzidas do português (ex.: "I have 10 years" em vez de "I'm 10 years old").
 5. Indícios de fluência: conte pausas longas, hesitações e autocorreções. Não atribua nota; apenas registre.
 
-## SAÍDA
-Somente o objeto JSON. Comentários em português do Brasil; transcrição em inglês.`;
+## SAÍDA (OBRIGATÓRIO: Retorne estritamente um JSON com esta estrutura)
+{
+  "status_audio": "sucesso",
+  "transcricao": "o que o aluno disse em ingles",
+  "coerencia": {
+    "coerente": true,
+    "comentario": "comentario em portugues sobre a coerencia"
+  },
+  "erros_gramaticais": [
+    {
+      "trecho": "trecho do erro",
+      "explicacao": "explicacao simples",
+      "correcao": "correcao em ingles"
+    }
+  ],
+  "naturalidade": {
+    "natural": true,
+    "comentario": "comentario em portugues"
+  },
+  "indicios_fluencia": {
+    "hesitacoes": 0,
+    "pausas_longas": 0,
+    "autocorrecoes": 0
+  }
+}
+IMPORTANTE: Se o aluno falou qualquer palavra em inglês ou tentou responder, use "status_audio": "sucesso". Use "audio_vazio", "apenas_ruido" ou "apenas_portugues" somente se não houver absolutamente nenhuma fala em inglês.`;
 
 export const erroGramaticalSchema = z.object({
   trecho: z.string().describe("Trecho com erro gramatical."),
@@ -159,8 +183,34 @@ export const PROMPT_CHAMADA_2 = `Você é um professor de inglês para crianças
 4. Comentário para o professor: 2 a 4 frases técnicas.
 5. Feedback para o aluno: 2 a 3 frases em português do Brasil, tom lúdico. Elogie primeiro, dê UMA dica principal, sem termos técnicos.
 
-## SAÍDA
-Somente o objeto JSON.`;
+## SAÍDA (OBRIGATÓRIO: Retorne estritamente um JSON com esta estrutura)
+{
+  "palavras_feedback": [
+    {
+      "palavra": "palavra",
+      "inteligibilidade": "clara",
+      "erro_catalogo": "NENHUM",
+      "explicacao": "Muito bem!"
+    }
+  ],
+  "resposta_ideal": {
+    "frase": "Exemplo de resposta completa e ideal em ingles para a pergunta (ex: It's blue.)",
+    "original_estava_correta": true
+  },
+  "sugestao_notas": {
+    "vocabulario": 4,
+    "justificativa_vocabulario": "Vocabulario adequado ao A1",
+    "estrutura": 4,
+    "justificativa_estrutura": "Estrutura gramatical correta"
+  },
+  "comentario_professor": "Comentario tecnico para o professor.",
+  "feedback_aluno": {
+    "ponto_forte": "Elogio sobre o que o aluno acertou",
+    "ponto_melhorar": "Dica pratica e amigavel",
+    "mensagem_completa": "Mensagem encorajadora em portugues para a crianca."
+  }
+}
+IMPORTANTE: "resposta_ideal"."frase" NUNCA pode ser vazia. Forneça sempre o exemplo de como responder a pergunta em inglês.`;
 
 export const palavraFeedbackSchema = z.object({
   palavra: z.string().describe("Palavra avaliada"),
@@ -477,23 +527,48 @@ CONTEXTO_IMAGEM: ${contextoImagem}
 
   // Limpa possíveis marcações markdown antes de parsear
   const textoPuro1 = resultado1.text.replace(/```json/g, "").replace(/```/g, "").trim();
-  const analise1 = JSON.parse(textoPuro1) as AnaliseChamada1;
+  let analise1: AnaliseChamada1;
+  try {
+    analise1 = JSON.parse(textoPuro1) as AnaliseChamada1;
+  } catch {
+    const jsonMatch = textoPuro1.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      analise1 = JSON.parse(jsonMatch[0]) as AnaliseChamada1;
+    } else {
+      throw new Error("Não foi possível ler a resposta de áudio da IA.");
+    }
+  }
 
-  if (analise1.status_audio !== "sucesso") {
+  const transcricao = (analise1.transcricao || "").trim();
+  const temFala = transcricao.length > 0 && transcricao !== "[inaudível]" && transcricao !== "[]";
+
+  const fraseExemploPadrao =
+    (pergunta.respostas_esperadas && pergunta.respostas_esperadas[0]) ||
+    pergunta.texto_referencia ||
+    (respostaEsperada !== "não informada" ? respostaEsperada : pergunta.enunciado);
+
+  const audioInvalido =
+    !temFala &&
+    (analise1.status_audio === "audio_vazio" ||
+      analise1.status_audio === "apenas_ruido" ||
+      analise1.status_audio === "apenas_portugues" ||
+      analise1.status_audio === "incompreensivel");
+
+  if (audioInvalido) {
     const defaultFeedback: FeedbackChamada2 = {
       palavras_feedback: [],
-      resposta_ideal: { frase: "", original_estava_correta: false },
+      resposta_ideal: { frase: fraseExemploPadrao, original_estava_correta: false },
       sugestao_notas: { vocabulario: 1, justificativa_vocabulario: "", estrutura: 1, justificativa_estrutura: "" },
-      comentario_professor: "Áudio não avaliável.",
+      comentario_professor: "Áudio sem fala em inglês detectada.",
       feedback_aluno: {
-        ponto_forte: "",
-        ponto_melhorar: "Tente gravar novamente, não conseguimos te ouvir direito.",
-        mensagem_completa: "Parece que houve um problema com o áudio! Grave de novo falando bem pertinho do microfone."
+        ponto_forte: "Ouvimos sua tentativa de gravação!",
+        ponto_melhorar: "Fale um pouquinho mais perto do microfone e tente responder em inglês.",
+        mensagem_completa: "Grave de novo falando bem pertinho do microfone para a gente ouvir sua pronúncia!"
       }
     };
     
     return {
-      transcricao: analise1.transcricao || "",
+      transcricao: transcricao || "(nenhuma fala compreendida)",
       respondeu_pergunta: false,
       nota_pronuncia: 1,
       nota_fluencia: 1,
@@ -503,7 +578,7 @@ CONTEXTO_IMAGEM: ${contextoImagem}
       ponto_forte: defaultFeedback.feedback_aluno.ponto_forte,
       ponto_melhorar: defaultFeedback.feedback_aluno.ponto_melhorar,
       palavras: [],
-      frase_modelo: "",
+      frase_modelo: fraseExemploPadrao,
       modelo_utilizado: modeloNome,
       analise_detalhada: {
         chamada1: analise1,
@@ -514,7 +589,7 @@ CONTEXTO_IMAGEM: ${contextoImagem}
   }
 
   // --- SIMULAÇÃO MOTOR DE PRONÚNCIA ---
-  const motor = simularMotorDePronuncia(analise1.transcricao);
+  const motor = simularMotorDePronuncia(analise1.transcricao || "");
 
   // --- CHAMADA 2: FEEDBACK PEDAGÓGICO (TEXTO DIRETO, SEM REENVIAR ÁUDIO) ---
   const inputChamada2 = `PERGUNTA: ${pergunta.enunciado}
@@ -540,23 +615,39 @@ PRONUNCIA: ${JSON.stringify(motor, null, 2)}`;
   });
   
   const textoPuro2 = resultado2.text.replace(/```json/g, "").replace(/```/g, "").trim();
-  const analise2 = JSON.parse(textoPuro2) as FeedbackChamada2;
+  let analise2: FeedbackChamada2;
+  try {
+    analise2 = JSON.parse(textoPuro2) as FeedbackChamada2;
+  } catch {
+    const jsonMatch = textoPuro2.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      analise2 = JSON.parse(jsonMatch[0]) as FeedbackChamada2;
+    } else {
+      throw new Error("Não foi possível processar o feedback pedagógico da IA.");
+    }
+  }
+
+  // Garante que frase_modelo NUNCA seja vazia
+  const fraseModeloFinal =
+    analise2.resposta_ideal?.frase && analise2.resposta_ideal.frase.trim().length > 0
+      ? analise2.resposta_ideal.frase.trim()
+      : fraseExemploPadrao;
 
   // --- CONSOLIDAÇÃO ---
   const metricas = calcularMetricasHibridas(analise1, motor, analise2);
 
   return {
     transcricao: analise1.transcricao,
-    respondeu_pergunta: analise1.coerencia.coerente,
+    respondeu_pergunta: analise1.coerencia?.coerente ?? false,
     nota_pronuncia: metricas.nota_pronuncia,
     nota_fluencia: metricas.nota_fluencia,
     nota_vocabulario: metricas.nota_vocabulario,
     nota_estrutura: metricas.nota_estrutura,
     resultado: metricas.resultado,
-    ponto_forte: analise2.feedback_aluno.ponto_forte,
-    ponto_melhorar: analise2.feedback_aluno.ponto_melhorar,
+    ponto_forte: analise2.feedback_aluno?.ponto_forte || "Muito bom esforço!",
+    ponto_melhorar: analise2.feedback_aluno?.ponto_melhorar || "Continue praticando para aperfeiçoar sua pronúncia.",
     palavras: metricas.palavrasAdaptadas,
-    frase_modelo: analise2.resposta_ideal.frase,
+    frase_modelo: fraseModeloFinal,
     modelo_utilizado: modeloNome,
     analise_detalhada: {
       chamada1: analise1,
