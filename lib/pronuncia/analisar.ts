@@ -370,22 +370,22 @@ export const MODELOS_RECOMENDADOS = [
   {
     id: "gemini-3.8-flash",
     nome: "Gemini 3.8 Flash",
-    descricao: "Recomendado oficial (Mais rápido, multimodal moderno e econômico)",
-  },
-  {
-    id: "gemini-3.7-flash",
-    nome: "Gemini 3.7 Flash",
-    descricao: "Alternativa estável de alta velocidade",
+    descricao: "Recomendado oficial (Mais inteligente, multimodal moderno e rápido)",
   },
   {
     id: "gemini-3.6-flash",
     nome: "Gemini 3.6 Flash",
-    descricao: "Versão compacta e rápida para áudio",
+    descricao: "Modelo de produção estável com alta capacidade",
   },
   {
-    id: "gemini-3.5-flash",
-    nome: "Gemini 3.5 Flash",
-    descricao: "Modelo anterior otimizado para tarefas em tempo real",
+    id: "gemini-3.5-flash-lite",
+    nome: "Gemini 3.5 Flash-Lite",
+    descricao: "Ultra rápido, menor latência e ideal para contornar picos de demanda",
+  },
+  {
+    id: "gemini-2.5-flash",
+    nome: "Gemini 2.5 Flash",
+    descricao: "Versão consagrada e econômica",
   },
   {
     id: "gemini-flash-latest",
@@ -430,8 +430,7 @@ export async function obterModeloConfigurado(): Promise<string> {
   if (
     envModel &&
     !envModel.startsWith("gemini-1.5") &&
-    !envModel.startsWith("gemini-2.0") &&
-    !envModel.startsWith("gemini-2.5")
+    !envModel.startsWith("gemini-2.0")
   ) {
     modeloAtivoCache = envModel;
   }
@@ -442,49 +441,64 @@ export async function obterModeloConfigurado(): Promise<string> {
 export async function obterModelosCandidatos(): Promise<string[]> {
   const modeloConfigurado = await obterModeloConfigurado();
   return Array.from(
-    new Set([modeloConfigurado, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash"])
+    new Set([
+      modeloConfigurado,
+      "gemini-3.8-flash",
+      "gemini-3.6-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-2.5-flash",
+      "gemini-flash-latest",
+    ])
   );
 }
 
 async function executarComFallback(
   chamadaFn: (genModel: ReturnType<typeof google>, nomeModelo: string) => Promise<{ text: string }>
 ): Promise<{ text: string; modeloUsado: string }> {
-  const modelos = (await obterModelosCandidatos()).slice(0, 3);
+  const modelos = await obterModelosCandidatos();
   let ultimoErro: unknown = null;
 
   for (const modelo of modelos) {
-    try {
-      const genModel = google(modelo);
-      const res = await chamadaFn(genModel, modelo);
-      modeloAtivoCache = modelo; // Memoriza o modelo bem-sucedido
-      return { text: res.text, modeloUsado: modelo };
-    } catch (err: unknown) {
-      ultimoErro = err;
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[pronuncia] Falha com modelo ${modelo}:`, msg);
+    for (let tentativa = 1; tentativa <= 2; tentativa++) {
+      try {
+        const genModel = google(modelo);
+        const res = await chamadaFn(genModel, modelo);
+        modeloAtivoCache = modelo; // Memoriza o modelo bem-sucedido
+        return { text: res.text, modeloUsado: modelo };
+      } catch (err: unknown) {
+        ultimoErro = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[pronuncia] Falha com modelo ${modelo} (tentativa ${tentativa}):`, msg);
 
-      const isHighDemandOrLimit =
-        msg.includes("high demand") ||
-        msg.includes("Spikes in demand") ||
-        msg.includes("429") ||
-        msg.includes("503") ||
-        msg.includes("overloaded") ||
-        msg.includes("quota") ||
-        msg.includes("RESOURCE_EXHAUSTED");
+        const isHighDemandOrLimit =
+          msg.includes("high demand") ||
+          msg.includes("Spikes in demand") ||
+          msg.includes("429") ||
+          msg.includes("503") ||
+          msg.includes("overloaded") ||
+          msg.includes("quota") ||
+          msg.includes("RESOURCE_EXHAUSTED");
 
-      const isDeprecatedOrTimeout =
-        msg.includes("not found") ||
-        msg.includes("not supported") ||
-        msg.includes("no longer available") ||
-        msg.includes("AbortError") ||
-        msg.includes("timeout") ||
-        msg.includes("timed out");
+        const isDeprecatedOrTimeout =
+          msg.includes("not found") ||
+          msg.includes("not supported") ||
+          msg.includes("no longer available") ||
+          msg.includes("AbortError") ||
+          msg.includes("timeout") ||
+          msg.includes("timed out");
 
-      if (isHighDemandOrLimit || isDeprecatedOrTimeout) {
-        continue;
+        if (isHighDemandOrLimit && tentativa === 1) {
+          // Pequena pausa de 600ms antes da 2ª tentativa no mesmo modelo
+          await new Promise((r) => setTimeout(r, 600));
+          continue;
+        }
+
+        if (isHighDemandOrLimit || isDeprecatedOrTimeout) {
+          break; // Passa para o próximo modelo candidato na lista
+        }
+
+        throw err;
       }
-
-      throw err;
     }
   }
 
@@ -619,35 +633,64 @@ RESPOSTA_ESPERADA: ${respostaEsperada}
 ANALISE: ${JSON.stringify(analise1, null, 2)}
 PRONUNCIA: ${JSON.stringify(motor, null, 2)}`;
 
-  const resultado2 = await executarComFallback(async (genModel) => {
-    return await generateText({
-      model: genModel,
-      system: PROMPT_CHAMADA_2 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
-      temperature: 0.0,
-      maxRetries: 0,
-      abortSignal: AbortSignal.timeout(7000),
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: inputChamada2 },
-          ],
-        },
-      ],
-    });
-  });
-  
-  const textoPuro2 = resultado2.text.replace(/```json/g, "").replace(/```/g, "").trim();
   let analise2: FeedbackChamada2;
   try {
-    analise2 = JSON.parse(textoPuro2) as FeedbackChamada2;
-  } catch {
-    const jsonMatch = textoPuro2.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      analise2 = JSON.parse(jsonMatch[0]) as FeedbackChamada2;
-    } else {
-      throw new Error("Não foi possível processar o feedback pedagógico da IA.");
+    const resultado2 = await executarComFallback(async (genModel) => {
+      return await generateText({
+        model: genModel,
+        system: PROMPT_CHAMADA_2 + "\n\nCRÍTICO: Retorne APENAS um JSON válido. Não use blocos markdown (```json).",
+        temperature: 0.0,
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(7000),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: inputChamada2 },
+            ],
+          },
+        ],
+      });
+    });
+    
+    const textoPuro2 = resultado2.text.replace(/```json/g, "").replace(/```/g, "").trim();
+    try {
+      analise2 = JSON.parse(textoPuro2) as FeedbackChamada2;
+    } catch {
+      const jsonMatch = textoPuro2.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        analise2 = JSON.parse(jsonMatch[0]) as FeedbackChamada2;
+      } else {
+        throw new Error("Não foi possível processar o feedback pedagógico da IA.");
+      }
     }
+  } catch (errChamada2) {
+    console.warn("[pronuncia] Chamada 2 não respondeu a tempo ou teve alta demanda. Gerando feedback consistente local:", errChamada2);
+    // Se a Chamada 1 (reconhecimento do áudio) já foi um sucesso, garantimos a resposta sem quebrar para o aluno!
+    analise2 = {
+      palavras_feedback: motor.palavras.map((p) => ({
+        palavra: p.palavra,
+        inteligibilidade: p.inteligibilidade,
+        erro_catalogo: "NENHUM" as const,
+        explicacao: p.inteligibilidade === "clara" ? "Pronúncia clara e correta." : "Pratique falar esta palavra com calma.",
+      })),
+      resposta_ideal: {
+        frase: fraseExemploPadrao,
+        original_estava_correta: analise1.coerencia?.coerente ?? true,
+      },
+      sugestao_notas: {
+        vocabulario: analise1.erros_gramaticais.length > 0 ? 3 : 4,
+        justificativa_vocabulario: "Vocabulário condizente com a pergunta.",
+        estrutura: analise1.erros_gramaticais.length > 0 ? 2 : 4,
+        justificativa_estrutura: "Estrutura compreendida.",
+      },
+      comentario_professor: "Boa resposta oral!",
+      feedback_aluno: {
+        ponto_forte: analise1.coerencia?.coerente ? "Você respondeu à pergunta com boa clareza!" : "Bom esforço na fala!",
+        ponto_melhorar: analise1.erros_gramaticais.length > 0 ? "Preste atenção aos pequenos detalhes gramaticais." : "Continue praticando para manter a fluência!",
+        mensagem_completa: "Parabéns pela dedicação! Continue gravando e praticando.",
+      },
+    };
   }
 
   // Garante que frase_modelo NUNCA seja vazia
