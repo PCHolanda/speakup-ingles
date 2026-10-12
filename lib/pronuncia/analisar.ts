@@ -9,7 +9,7 @@
 import { google } from "@ai-sdk/google";
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
-import { CODIGOS_ERRO, CodigoErro } from "@/lib/catalogo-erros";
+import { CODIGOS_ERRO, CodigoErro, CATALOGO_ERROS } from "@/lib/catalogo-erros";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export class ConfigIAAusenteError extends Error {}
@@ -117,9 +117,12 @@ export interface FonemaFraco {
 
 export interface PalavraMotor {
   palavra: string;
+  palavra_alvo?: string;
   precisao: number;
   inteligibilidade: "clara" | "com_esforco" | "nao_entendida";
   fonemas_fracos: FonemaFraco[];
+  codigo_erro?: CodigoErro;
+  dica_sugerida?: string;
 }
 
 export interface PronunciaMotor {
@@ -127,22 +130,172 @@ export interface PronunciaMotor {
   palavras: PalavraMotor[];
 }
 
-function simularMotorDePronuncia(transcricao: string): PronunciaMotor {
-  const palavras = transcricao
+function simularMotorDePronuncia(
+  transcricao: string,
+  respostaEsperada?: string,
+  errosGramaticais?: { trecho: string; explicacao: string; correcao: string }[]
+): PronunciaMotor {
+  const palavrasTranscritas = transcricao
     .split(/\s+/)
-    .filter((w) => w.length > 0 && !w.match(/\[.*\]/))
+    .filter((w) => w.length > 0)
     .map((w) => w.replace(/[.,!?]/g, "").toLowerCase());
 
-  return {
-    fluencia_motor: 85,
-    palavras: palavras.map((palavra) => {
+  // Palavras esperadas de referência da atividade
+  const palavrasEsperadas =
+    respostaEsperada && respostaEsperada !== "não informada"
+      ? respostaEsperada
+          .split(/[|\n]/)[0]
+          .split(/\s+/)
+          .filter((w) => w.length > 0)
+          .map((w) => w.replace(/[.,!?]/g, "").toLowerCase())
+      : [];
+
+  const palavras: PalavraMotor[] = palavrasTranscritas.map((palavra, idx) => {
+    // 1. Áudio incompreensível nesta palavra
+    if (palavra.includes("[inaudível]") || palavra.includes("inaudivel") || palavra === "[]") {
+      const alvo = palavrasEsperadas[idx] || palavra;
       return {
         palavra,
-        precisao: 90,
-        inteligibilidade: "clara",
+        palavra_alvo: alvo,
+        precisao: 30,
+        inteligibilidade: "nao_entendida",
         fonemas_fracos: [],
+        codigo_erro: "OUTRO",
+        dica_sugerida: `Esta palavra não soou nítida. Tente falar "${alvo}" bem perto do microfone.`,
       };
-    }),
+    }
+
+    // 2. Compara com a palavra esperada se fornecida
+    const esperada = palavrasEsperadas[idx];
+    if (esperada && esperada !== palavra) {
+      // TH trocado por T, F ou D
+      if (
+        (esperada.includes("th") && (palavra.startsWith("t") || palavra.startsWith("f") || palavra.startsWith("d"))) ||
+        (esperada === "three" && (palavra === "tree" || palavra === "free")) ||
+        (esperada === "the" && (palavra === "de" || palavra === "te")) ||
+        (esperada === "this" && palavra === "dis") ||
+        (esperada === "that" && palavra === "dat")
+      ) {
+        return {
+          palavra,
+          palavra_alvo: esperada,
+          precisao: 60,
+          inteligibilidade: "com_esforco",
+          fonemas_fracos: [{ esperado: "θ", precisao: 50 }],
+          codigo_erro: "TH",
+          dica_sugerida: CATALOGO_ERROS.TH.dica,
+        };
+      }
+
+      // R inicial falado como H (red -> head)
+      if (
+        (esperada.startsWith("r") && (palavra.startsWith("h") || palavra.startsWith("rr"))) ||
+        (esperada === "red" && palavra === "head")
+      ) {
+        return {
+          palavra,
+          palavra_alvo: esperada,
+          precisao: 55,
+          inteligibilidade: "com_esforco",
+          fonemas_fracos: [{ esperado: "ɹ", precisao: 50 }],
+          codigo_erro: "R_INICIAL",
+          dica_sugerida: CATALOGO_ERROS.R_INICIAL.dica,
+        };
+      }
+
+      // Y inicial perdido (years -> ears)
+      if (
+        (esperada.startsWith("y") && !palavra.startsWith("y")) ||
+        (esperada === "years" && palavra === "ears")
+      ) {
+        return {
+          palavra,
+          palavra_alvo: esperada,
+          precisao: 60,
+          inteligibilidade: "com_esforco",
+          fonemas_fracos: [{ esperado: "j", precisao: 50 }],
+          codigo_erro: "Y_INICIAL",
+          dica_sugerida: CATALOGO_ERROS.Y_INICIAL.dica,
+        };
+      }
+
+      // V e W
+      if (
+        (esperada.startsWith("w") && palavra.startsWith("v")) ||
+        (esperada.startsWith("v") && palavra.startsWith("w"))
+      ) {
+        return {
+          palavra,
+          palavra_alvo: esperada,
+          precisao: 65,
+          inteligibilidade: "com_esforco",
+          fonemas_fracos: [{ esperado: esperada[0], precisao: 55 }],
+          codigo_erro: "V_W",
+          dica_sugerida: CATALOGO_ERROS.V_W.dica,
+        };
+      }
+
+      // Palavra diferente da resposta esperada
+      return {
+        palavra,
+        palavra_alvo: esperada,
+        precisao: 50,
+        inteligibilidade: "com_esforco",
+        fonemas_fracos: [],
+        codigo_erro: "OUTRO",
+        dica_sugerida: `Pronuncie a palavra modelo "${esperada}" com atenção.`,
+      };
+    }
+
+    // 3. Epêntese intrínseca (ex: istop, stopi, bigui, dogui)
+    if (
+      (palavra.startsWith("is") && palavra.length > 4 && !["island", "isn't"].includes(palavra)) ||
+      (palavra.endsWith("i") && ["stopi", "bigui", "dogui", "caty", "likei"].includes(palavra))
+    ) {
+      const alvo = palavra.replace(/^is/, "s").replace(/i$/, "");
+      return {
+        palavra,
+        palavra_alvo: alvo,
+        precisao: 60,
+        inteligibilidade: "com_esforco",
+        fonemas_fracos: [],
+        codigo_erro: "EPENTESE",
+        dica_sugerida: CATALOGO_ERROS.EPENTESE.dica,
+      };
+    }
+
+    // 4. Erros gramaticais ou fonéticos apontados na Chamada 1
+    const erroAssociado = (errosGramaticais || []).find((eg) =>
+      eg.trecho.toLowerCase().includes(palavra)
+    );
+    if (erroAssociado) {
+      return {
+        palavra,
+        palavra_alvo: palavra,
+        precisao: 65,
+        inteligibilidade: "com_esforco",
+        fonemas_fracos: [],
+        codigo_erro: "OUTRO",
+        dica_sugerida: erroAssociado.explicacao || `Pratique pronunciar "${palavra}" com calma.`,
+      };
+    }
+
+    // Palavra clara padrão
+    return {
+      palavra,
+      palavra_alvo: palavra,
+      precisao: 95,
+      inteligibilidade: "clara",
+      fonemas_fracos: [],
+    };
+  });
+
+  const claras = palavras.filter((p) => p.inteligibilidade === "clara").length;
+  const fluenciaCalculada = palavras.length > 0 ? Math.round((claras / palavras.length) * 100) : 85;
+
+  return {
+    fluencia_motor: Math.max(50, fluenciaCalculada),
+    palavras,
   };
 }
 
@@ -342,14 +495,27 @@ function calcularMetricasHibridas(
     if (pm.inteligibilidade === "nao_entendida") status = "erro";
     else if (pm.inteligibilidade === "com_esforco") status = "atencao";
 
+    const codigo_erro =
+      (feedbackInfo && feedbackInfo.erro_catalogo !== "NENHUM"
+        ? feedbackInfo.erro_catalogo
+        : pm.codigo_erro) || null;
+
+    let dica = status === "ok" ? null : (feedbackInfo?.explicacao || pm.dica_sugerida || null);
+    if (status !== "ok" && !dica && codigo_erro && CATALOGO_ERROS[codigo_erro]) {
+      dica = CATALOGO_ERROS[codigo_erro].dica;
+    }
+    if (status !== "ok" && !dica) {
+      dica = `Ouça a pronúncia correta de "${pm.palavra_alvo || pm.palavra}" e tente novamente.`;
+    }
+
     return {
       palavra: pm.palavra,
-      palavra_alvo: pm.palavra,
+      palavra_alvo: pm.palavra_alvo || pm.palavra,
       ouvido: pm.palavra,
       nota: Math.round(pm.precisao / 10),
       status,
-      codigo_erro: feedbackInfo && feedbackInfo.erro_catalogo !== "NENHUM" ? feedbackInfo.erro_catalogo : null,
-      dica: status === "ok" ? null : (feedbackInfo?.explicacao || null),
+      codigo_erro,
+      dica,
     };
   });
 
@@ -624,7 +790,11 @@ CONTEXTO_IMAGEM: ${contextoImagem}
   }
 
   // --- SIMULAÇÃO MOTOR DE PRONÚNCIA ---
-  const motor = simularMotorDePronuncia(analise1.transcricao || "");
+  const motor = simularMotorDePronuncia(
+    analise1.transcricao || "",
+    respostaEsperada,
+    analise1.erros_gramaticais
+  );
 
   // --- CHAMADA 2: FEEDBACK PEDAGÓGICO (TEXTO DIRETO, SEM REENVIAR ÁUDIO) ---
   const inputChamada2 = `PERGUNTA: ${pergunta.enunciado}

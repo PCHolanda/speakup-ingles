@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { GravadorWav } from "@/lib/audio/wav-recorder";
 import type { ResultadoQualidade } from "@/lib/audio/qualidade";
+import { CATALOGO_ERROS, type CodigoErro } from "@/lib/catalogo-erros";
 
 interface Gravacao {
   url: string;
@@ -31,6 +32,8 @@ interface Gravacao {
 
 interface PalavraAnalise {
   palavra: string;
+  palavra_alvo?: string;
+  ouvido?: string;
   status: "ok" | "atencao" | "erro";
   codigo_erro: string | null;
   dica: string | null;
@@ -95,6 +98,7 @@ export default function AlunoAtividadePlayerPage({
 
   // Estados de Áudio e Gravação
   const [falando, setFalando] = useState(false);
+  const [palavraReproduzindo, setPalavraReproduzindo] = useState<string | null>(null);
   const [gravando, setGravando] = useState(false);
   const [tempoGravacao, setTempoGravacao] = useState(0);
   const [nivelMic, setNivelMic] = useState(0);
@@ -144,7 +148,7 @@ export default function AlunoAtividadePlayerPage({
 
   const perguntaAtual = perguntas[indiceAtual];
 
-  // Falar o enunciado da pergunta (TTS)
+  // Falar o enunciado da pergunta ou frase completa (TTS)
   const falarPergunta = (texto: string) => {
     if (!window.speechSynthesis) return;
 
@@ -156,6 +160,25 @@ export default function AlunoAtividadePlayerPage({
     setFalando(true);
     utterance.onend = () => setFalando(false);
     utterance.onerror = () => setFalando(false);
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // Falar uma palavra específica isolada com pronúncia lenta e articulada
+  const falarPalavra = (palavraOuTexto: string) => {
+    if (!window.speechSynthesis) return;
+
+    window.speechSynthesis.cancel();
+    const cleanText = palavraOuTexto.replace(/[[\].,!?:;"]/g, "").trim();
+    if (!cleanText) return;
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = "en-US";
+    utterance.rate = 0.8; // Articulação pausada e nítida para aprendizado fonético A1
+
+    setPalavraReproduzindo(cleanText.toLowerCase());
+    utterance.onend = () => setPalavraReproduzindo(null);
+    utterance.onerror = () => setPalavraReproduzindo(null);
 
     window.speechSynthesis.speak(utterance);
   };
@@ -581,29 +604,160 @@ export default function AlunoAtividadePlayerPage({
                 )}
               </div>
 
-              {/* O que foi entendido, com palavras coloridas */}
-              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">O que entendemos</p>
+              {/* O que foi entendido, com palavras coloridas e clicáveis para ouvir */}
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  O que entendemos (clique na palavra para ouvir)
+                </p>
+              </div>
               <div className="flex flex-wrap gap-1.5 mb-4">
                 {analiseAtual.palavras.length > 0 ? (
-                  analiseAtual.palavras.map((p, i) => (
-                    <span
-                      key={`${p.palavra}-${i}`}
-                      title={p.dica ?? undefined}
-                      className={`px-2 py-1 rounded-lg text-sm font-bold border ${
-                        p.status === "ok"
-                          ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
-                          : p.status === "atencao"
-                            ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
-                            : "bg-rose-500/10 text-rose-300 border-rose-500/30 underline decoration-wavy decoration-rose-400"
-                      }`}
-                    >
-                      {p.palavra}
-                    </span>
-                  ))
+                  analiseAtual.palavras.map((p, i) => {
+                    const alvo = p.palavra_alvo || p.palavra;
+                    const estaTocando =
+                      palavraReproduzindo === alvo.toLowerCase() ||
+                      palavraReproduzindo === p.palavra.toLowerCase();
+
+                    return (
+                      <button
+                        key={`${p.palavra}-${i}`}
+                        type="button"
+                        onClick={() => falarPalavra(alvo)}
+                        title={`Ouvir como pronunciar "${alvo}"`}
+                        className={`group inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-bold border transition-all cursor-pointer ${
+                          p.status === "ok"
+                            ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20"
+                            : p.status === "atencao"
+                              ? "bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25 ring-1 ring-amber-500/20"
+                              : "bg-rose-500/15 text-rose-300 border-rose-500/40 hover:bg-rose-500/25 ring-1 ring-rose-500/20 underline decoration-wavy decoration-rose-400"
+                        } ${estaTocando ? "ring-2 ring-violet-400 scale-105 bg-violet-500/20 text-violet-200" : ""}`}
+                      >
+                        <span>{p.palavra}</span>
+                        <Volume2
+                          className={`w-3.5 h-3.5 transition-transform ${
+                            estaTocando
+                              ? "text-violet-300 animate-pulse scale-125"
+                              : "opacity-40 group-hover:opacity-100"
+                          }`}
+                        />
+                      </button>
+                    );
+                  })
                 ) : (
-                  <span className="text-sm italic text-slate-500">{analiseAtual.transcricao || "(nada compreendido)"}</span>
+                  <span className="text-sm italic text-slate-500">
+                    {analiseAtual.transcricao || "(nada compreendido)"}
+                  </span>
                 )}
               </div>
+
+              {/* Seção Destacada: Como pronunciar as palavras com atenção/erro */}
+              {analiseAtual.palavras.some((p) => p.status !== "ok") && (
+                <div className="mb-4 bg-slate-900/90 border border-amber-500/30 rounded-2xl p-4 shadow-lg shadow-amber-950/20">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black uppercase tracking-wider text-amber-300">
+                          Como Pronunciar Corretamente
+                        </h4>
+                        <p className="text-[11px] text-slate-400">
+                          Ouça o som nativo da palavra e veja como posicionar a boca
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30">
+                      {analiseAtual.palavras.filter((p) => p.status !== "ok").length}{" "}
+                      {analiseAtual.palavras.filter((p) => p.status !== "ok").length === 1 ? "palavra" : "palavras"}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {analiseAtual.palavras
+                      .filter((p) => p.status !== "ok")
+                      .map((p, i) => {
+                        const alvo = p.palavra_alvo || p.palavra;
+                        const estaTocando =
+                          palavraReproduzindo === alvo.toLowerCase() ||
+                          palavraReproduzindo === p.palavra.toLowerCase();
+                        const codigoValido =
+                          p.codigo_erro && p.codigo_erro in CATALOGO_ERROS
+                            ? (p.codigo_erro as CodigoErro)
+                            : null;
+                        const infoCatalogo = codigoValido ? CATALOGO_ERROS[codigoValido] : null;
+
+                        return (
+                          <div
+                            key={`treino-${p.palavra}-${i}`}
+                            className="bg-slate-950/80 border border-slate-800 hover:border-slate-700 rounded-xl p-3.5 transition-all"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-base font-black text-white tracking-wide">
+                                  &quot;{alvo}&quot;
+                                </span>
+                                {p.palavra.toLowerCase() !== alvo.toLowerCase() && (
+                                  <span className="text-[11px] text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded-md border border-slate-700">
+                                    Entendemos: <span className="line-through text-rose-300">{p.palavra}</span>
+                                  </span>
+                                )}
+                                {infoCatalogo?.nome && (
+                                  <span className="text-[10px] font-bold bg-violet-500/15 text-violet-300 border border-violet-500/30 px-2 py-0.5 rounded-md">
+                                    {infoCatalogo.nome}
+                                  </span>
+                                )}
+                                <span
+                                  className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                                    p.status === "erro"
+                                      ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                                      : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                  }`}
+                                >
+                                  {p.status === "erro" ? "Incorreta" : "Atenção ao som"}
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => falarPalavra(alvo)}
+                                disabled={estaTocando}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shadow-sm ${
+                                  estaTocando
+                                    ? "bg-violet-600 text-white animate-pulse"
+                                    : "bg-violet-600/20 hover:bg-violet-600 text-violet-300 hover:text-white border border-violet-500/40 hover:border-violet-500"
+                                }`}
+                              >
+                                <Volume2 className={`w-3.5 h-3.5 ${estaTocando ? "animate-bounce" : ""}`} />
+                                {estaTocando ? "Ouvindo..." : "Ouvir Pronúncia"}
+                              </button>
+                            </div>
+
+                            {/* Dica de articulação e como pronunciar */}
+                            <div className="bg-slate-900/90 rounded-lg p-2.5 border border-slate-800/80 text-xs text-slate-300 flex items-start gap-2.5">
+                              <Target className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                              <div className="space-y-1">
+                                <p className="font-semibold text-slate-200">
+                                  {p.dica ||
+                                    infoCatalogo?.dica ||
+                                    `Pratique falar "${alvo}" com pronúncia clara.`}
+                                </p>
+                                {infoCatalogo?.exemplo && (
+                                  <p className="text-[11px] text-slate-400">
+                                    Exemplo de pronúncia:{" "}
+                                    <span className="text-amber-300 font-medium">
+                                      {infoCatalogo.exemplo}
+                                    </span>
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
 
               {/* Notas 1–4 */}
               <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 mb-4">
@@ -639,30 +793,6 @@ export default function AlunoAtividadePlayerPage({
                   <span>{analiseAtual.ponto_melhorar}</span>
                 </div>
               </div>
-
-              {/* Dicas por palavra */}
-              {analiseAtual.palavras.some((p) => p.status !== "ok" && p.dica) && (
-                <div className="mb-4">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Dicas de pronúncia</p>
-                  <ul className="space-y-1.5">
-                    {analiseAtual.palavras
-                      .filter((p) => p.status !== "ok" && p.dica)
-                      .map((p, i) => (
-                        <li key={`dica-${p.palavra}-${i}`} className="text-xs text-slate-300 flex items-start gap-2">
-                          <button
-                            onClick={() => falarPergunta(p.palavra)}
-                            title={`Ouvir "${p.palavra}"`}
-                            className="shrink-0 inline-flex items-center gap-1 font-black text-violet-300 bg-violet-500/10 border border-violet-500/30 px-1.5 py-0.5 rounded-md hover:bg-violet-500/20 cursor-pointer"
-                          >
-                            <Volume2 className="w-3 h-3" />
-                            {p.palavra}
-                          </button>
-                          <span className="pt-0.5">{p.dica}</span>
-                        </li>
-                      ))}
-                  </ul>
-                </div>
-              )}
 
               {/* Frase modelo */}
               <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-between gap-3">
