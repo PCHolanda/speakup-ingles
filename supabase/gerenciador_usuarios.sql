@@ -28,13 +28,17 @@ begin
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
-    created_at, updated_at
+    created_at, updated_at,
+    confirmation_token, recovery_token, email_change_token_new,
+    email_change, email_change_token_current, phone_change,
+    phone_change_token, reauthentication_token
   ) values (
     v_user_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
     lower(trim(p_email)), v_encrypted_pw, now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
     jsonb_build_object('nome', p_nome),
-    now(), now()
+    now(), now(),
+    '', '', '', '', '', '', '', ''
   );
 
   -- Inserir em auth.identities (id é UUID)
@@ -80,13 +84,17 @@ begin
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
-    created_at, updated_at
+    created_at, updated_at,
+    confirmation_token, recovery_token, email_change_token_new,
+    email_change, email_change_token_current, phone_change,
+    phone_change_token, reauthentication_token
   ) values (
     v_user_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
     lower(trim(p_email)), v_encrypted_pw, now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
     jsonb_build_object('nome', p_nome),
-    now(), now()
+    now(), now(),
+    '', '', '', '', '', '', '', ''
   );
 
   -- Inserir em auth.identities (id é UUID)
@@ -171,13 +179,17 @@ begin
   insert into auth.users (
     id, instance_id, aud, role, email, encrypted_password,
     email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
-    created_at, updated_at
+    created_at, updated_at,
+    confirmation_token, recovery_token, email_change_token_new,
+    email_change, email_change_token_current, phone_change,
+    phone_change_token, reauthentication_token
   ) values (
     v_aluno_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
     v_synthetic_email, v_encrypted_pw, now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
     jsonb_build_object('nome', p_nome_aluno),
-    now(), now()
+    now(), now(),
+    '', '', '', '', '', '', '', ''
   );
 
   -- Inserir em auth.identities (id é UUID)
@@ -195,10 +207,4 @@ begin
   insert into profiles (id, papel, nome)
   values (v_aluno_id, 'student', p_nome_aluno);
 
-  -- Matricular na turma
-  insert into turma_alunos (turma_id, aluno_id)
-  values (v_turma_id, v_aluno_id);
 
-  return v_aluno_id;
-end;
-$$ language plpgsql;

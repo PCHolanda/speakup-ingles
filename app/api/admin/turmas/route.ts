@@ -9,6 +9,7 @@ const turmaSchema = z.object({
     .length(6, "O código da turma deve ter exatamente 6 caracteres")
     .regex(/^[A-Za-z0-9]{6}$/, "O código deve conter apenas letras e números"),
   professor_id: z.string().uuid("Selecione um professor válido"),
+  escola_id: z.string().uuid("Selecione uma escola válida").optional().nullable(),
 });
 
 export async function POST(request: NextRequest) {
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { nome, codigo, professor_id } = result.data;
+    const { nome, codigo, professor_id, escola_id } = result.data;
     const admin = createAdminClient();
     const cleanCodigo = codigo.trim().toUpperCase();
 
@@ -41,16 +42,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Inserir a turma
-    const { data: novaTurma, error: insertError } = await admin
+    // 2. Inserir a turma (tolerante caso a coluna escola_id ainda não exista no banco)
+    const payload: Record<string, unknown> = {
+      nome: nome.trim(),
+      codigo: cleanCodigo,
+      professor_id,
+    };
+    if (escola_id) {
+      payload.escola_id = escola_id;
+    }
+
+    let { data: novaTurma, error: insertError } = await admin
       .from("turmas")
-      .insert({
-        nome: nome.trim(),
-        codigo: cleanCodigo,
-        professor_id,
-      })
+      .insert(payload)
       .select()
       .single();
+
+    if (insertError && escola_id && insertError.message?.includes("escola_id")) {
+      delete payload.escola_id;
+      const retry = await admin.from("turmas").insert(payload).select().single();
+      novaTurma = retry.data;
+      insertError = retry.error;
+    }
 
     if (insertError) {
       return NextResponse.json(

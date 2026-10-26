@@ -7,6 +7,8 @@ const professorSchema = z.object({
   email: z.string().email("E-mail inválido"),
   senha: z.string().min(6, "A senha deve ter pelo menos 6 caracteres"),
   papel: z.enum(["teacher", "admin"]).default("teacher"),
+  escola_id: z.string().uuid().optional().nullable(),
+  escola_ids: z.array(z.string().uuid()).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -21,7 +23,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { nome, email, senha, papel } = result.data;
+    const { nome, email, senha, papel, escola_id, escola_ids } = result.data;
     const admin = createAdminClient();
 
     // 1. Criar usuário no Supabase Auth
@@ -34,7 +36,10 @@ export async function POST(request: NextRequest) {
     });
 
     if (authError || !authData.user) {
-      if (authError?.message?.includes("already registered") || authError?.message?.includes("already exists")) {
+      if (
+        authError?.message?.includes("already registered") ||
+        authError?.message?.includes("already exists")
+      ) {
         return NextResponse.json(
           { error: "Este e-mail já está cadastrado no sistema." },
           { status: 409 }
@@ -56,12 +61,28 @@ export async function POST(request: NextRequest) {
     });
 
     if (profileError) {
-      // rollback auth se falhar no profile
       await admin.auth.admin.deleteUser(userId);
       return NextResponse.json(
         { error: "Erro ao salvar o perfil do professor no banco de dados." },
         { status: 500 }
       );
+    }
+
+    // 3. Vincular às escolas selecionadas (se fornecidas)
+    const targets = new Set<string>();
+    if (escola_id) targets.add(escola_id);
+    if (escola_ids) escola_ids.forEach((id) => targets.add(id));
+
+    if (targets.size > 0) {
+      try {
+        const registros = Array.from(targets).map((eid) => ({
+          escola_id: eid,
+          professor_id: userId,
+        }));
+        await admin.from("escola_professores").insert(registros);
+      } catch (e) {
+        console.warn("Aviso ao vincular professor às escolas:", e);
+      }
     }
 
     return NextResponse.json({
