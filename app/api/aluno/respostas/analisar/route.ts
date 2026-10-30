@@ -139,6 +139,7 @@ export async function POST(request: NextRequest) {
         metricas: {
           qualidade: qualidade.metricas,
           modelo: analise.modelo_utilizado || process.env.GEMINI_MODEL || "gemini-3.8-flash",
+          ...(analise.detalhes_criterios ? { detalhes_criterios: analise.detalhes_criterios } : {}),
           ...(analise.analise_detalhada ? { analise_detalhada: analise.analise_detalhada } : {}),
         },
         nota_pronuncia: analise.nota_pronuncia,
@@ -152,6 +153,7 @@ export async function POST(request: NextRequest) {
           palavras: analise.palavras,
           frase_modelo: analise.frase_modelo,
           respondeu_pergunta: analise.respondeu_pergunta,
+          ...(analise.detalhes_criterios ? { detalhes_criterios: analise.detalhes_criterios } : {}),
           ...(analise.analise_detalhada ? { analise_detalhada: analise.analise_detalhada } : {}),
         },
         revisado: false,

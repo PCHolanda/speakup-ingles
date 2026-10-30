@@ -19,6 +19,11 @@ import {
   Home,
   ThumbsUp,
   Target,
+  BookOpen,
+  Activity,
+  Layers,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { GravadorWav } from "@/lib/audio/wav-recorder";
 import type { ResultadoQualidade } from "@/lib/audio/qualidade";
@@ -39,6 +44,42 @@ interface PalavraAnalise {
   dica: string | null;
 }
 
+export interface DetalhesCriterios {
+  pronuncia: {
+    nota: number;
+    clareza: string;
+    entonacao: string;
+    sons_especificos: {
+      th?: string;
+      r?: string;
+      v_w?: string;
+      ed_final?: string;
+      epentese?: string;
+    };
+    observacoes: string;
+  };
+  vocabulario: {
+    nota: number;
+    palavras_esperadas_utilizadas: string[];
+    variedade: string;
+    adequacao_tema: boolean;
+    observacoes: string;
+  };
+  fluencia: {
+    nota: number;
+    pausas_excessivas: number;
+    hesitacoes: number;
+    ritmo: string;
+    observacoes: string;
+  };
+  estrutura: {
+    nota: number;
+    frase_completa: boolean;
+    ordem_palavras_correta: boolean;
+    observacoes: string;
+  };
+}
+
 interface Analise {
   transcricao: string;
   respondeu_pergunta: boolean;
@@ -51,6 +92,7 @@ interface Analise {
   ponto_melhorar: string;
   palavras: PalavraAnalise[];
   frase_modelo: string;
+  detalhes_criterios?: DetalhesCriterios;
 }
 
 const CRITERIOS: { chave: keyof Analise; rotulo: string }[] = [
@@ -111,6 +153,8 @@ export default function AlunoAtividadePlayerPage({
   const [errosAnalise, setErrosAnalise] = useState<Record<number, string>>({});
   const [analisando, setAnalisando] = useState(false);
   const [avisoAnalise, setAvisoAnalise] = useState(false);
+  const [criterioAtivo, setCriterioAtivo] = useState<"pronuncia" | "vocabulario" | "fluencia" | "estrutura">("pronuncia");
+  const [expandirCriterios, setExpandirCriterios] = useState(true);
 
   const gravadorRef = useRef<GravadorWav | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -781,6 +825,367 @@ export default function AlunoAtividadePlayerPage({
                   );
                 })}
               </div>
+
+              {/* Análise Aprofundada dos 4 Critérios */}
+              {analiseAtual.detalhes_criterios && (
+                <div className="mb-4 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg shadow-blue-950/20">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black uppercase tracking-wider text-blue-300">
+                          Análise em Profundidade dos 4 Critérios
+                        </h4>
+                        <p className="text-[11px] text-slate-400">
+                          Pronúncia, Vocabulário, Fluência e Estrutura detalhados
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setExpandirCriterios(!expandirCriterios)}
+                      className="text-xs font-semibold text-slate-400 hover:text-white flex items-center gap-1 bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700 transition-colors cursor-pointer"
+                    >
+                      <span>{expandirCriterios ? "Ocultar" : "Ver Detalhes"}</span>
+                      {expandirCriterios ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+
+                  {expandirCriterios && (
+                    <div>
+                      {/* Abas dos 4 Critérios */}
+                      <div className="grid grid-cols-4 gap-1.5 mb-3 p-1 bg-slate-950/80 rounded-xl border border-slate-800">
+                        <button
+                          type="button"
+                          onClick={() => setCriterioAtivo("pronuncia")}
+                          className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            criterioAtivo === "pronuncia"
+                              ? "bg-violet-600 text-white shadow-md shadow-violet-600/30"
+                              : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                          }`}
+                        >
+                          <Mic className="w-3.5 h-3.5 shrink-0" />
+                          <span className="hidden sm:inline">Pronúncia</span>
+                          <span className="text-[10px] opacity-80">({analiseAtual.nota_pronuncia}/4)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setCriterioAtivo("vocabulario")}
+                          className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            criterioAtivo === "vocabulario"
+                              ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
+                              : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                          }`}
+                        >
+                          <BookOpen className="w-3.5 h-3.5 shrink-0" />
+                          <span className="hidden sm:inline">Vocabulário</span>
+                          <span className="text-[10px] opacity-80">({analiseAtual.nota_vocabulario}/4)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setCriterioAtivo("fluencia")}
+                          className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            criterioAtivo === "fluencia"
+                              ? "bg-amber-600 text-white shadow-md shadow-amber-600/30"
+                              : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                          }`}
+                        >
+                          <Activity className="w-3.5 h-3.5 shrink-0" />
+                          <span className="hidden sm:inline">Fluência</span>
+                          <span className="text-[10px] opacity-80">({analiseAtual.nota_fluencia}/4)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setCriterioAtivo("estrutura")}
+                          className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            criterioAtivo === "estrutura"
+                              ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/30"
+                              : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                          }`}
+                        >
+                          <Layers className="w-3.5 h-3.5 shrink-0" />
+                          <span className="hidden sm:inline">Estrutura</span>
+                          <span className="text-[10px] opacity-80">({analiseAtual.nota_estrutura}/4)</span>
+                        </button>
+                      </div>
+
+                      {/* Painel do Critério Ativo */}
+                      <div className="bg-slate-950/90 rounded-xl p-3.5 border border-slate-800/80">
+                        {/* 1. PRONÚNCIA */}
+                        {criterioAtivo === "pronuncia" && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                              <span className="text-xs font-bold text-slate-300">O que foi observado:</span>
+                              <span className="text-[11px] font-bold text-violet-400">
+                                Sons específicos (th, r, v, ed), clareza e entonação
+                              </span>
+                            </div>
+
+                            {/* Sons Específicos */}
+                            <div>
+                              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                                Sons Específicos do Inglês:
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-700 text-slate-200">
+                                  <span className="font-bold text-violet-300">TH (/θ/, /ð/):</span>{" "}
+                                  {analiseAtual.detalhes_criterios.pronuncia.sons_especificos?.th || "avaliado"}
+                                </span>
+
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-700 text-slate-200">
+                                  <span className="font-bold text-violet-300">R inicial/medial:</span>{" "}
+                                  {analiseAtual.detalhes_criterios.pronuncia.sons_especificos?.r || "avaliado"}
+                                </span>
+
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-700 text-slate-200">
+                                  <span className="font-bold text-violet-300">V e W:</span>{" "}
+                                  {analiseAtual.detalhes_criterios.pronuncia.sons_especificos?.v_w || "avaliado"}
+                                </span>
+
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-700 text-slate-200">
+                                  <span className="font-bold text-violet-300">Final -ed:</span>{" "}
+                                  {analiseAtual.detalhes_criterios.pronuncia.sons_especificos?.ed_final || "avaliado"}
+                                </span>
+
+                                {analiseAtual.detalhes_criterios.pronuncia.sons_especificos?.epentese && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-700 text-slate-200">
+                                    <span className="font-bold text-violet-300">Epêntese (i extra):</span>{" "}
+                                    {analiseAtual.detalhes_criterios.pronuncia.sons_especificos.epentese}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Clareza e Entonação */}
+                            <div className="grid grid-cols-2 gap-2 pt-1">
+                              <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                  Clareza Acústica
+                                </span>
+                                <span className="text-xs font-bold text-emerald-300">
+                                  {analiseAtual.detalhes_criterios.pronuncia.clareza}
+                                </span>
+                              </div>
+                              <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                  Entonação e Melodia
+                                </span>
+                                <span className="text-xs font-bold text-sky-300">
+                                  {analiseAtual.detalhes_criterios.pronuncia.entonacao}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Observação Pedagógica */}
+                            {analiseAtual.detalhes_criterios.pronuncia.observacoes && (
+                              <div className="p-2.5 bg-violet-950/20 border border-violet-900/40 rounded-lg text-xs text-violet-200">
+                                <p className="font-medium">{analiseAtual.detalhes_criterios.pronuncia.observacoes}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* 2. VOCABULÁRIO */}
+                        {criterioAtivo === "vocabulario" && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                              <span className="text-xs font-bold text-slate-300">O que foi observado:</span>
+                              <span className="text-[11px] font-bold text-blue-400">
+                                Palavras esperadas, variedade e adequação ao tema
+                              </span>
+                            </div>
+
+                            {/* Palavras Esperadas Utilizadas */}
+                            <div>
+                              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                                Palavras Esperadas Utilizadas:
+                              </p>
+                              {analiseAtual.detalhes_criterios.vocabulario.palavras_esperadas_utilizadas &&
+                              analiseAtual.detalhes_criterios.vocabulario.palavras_esperadas_utilizadas.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {analiseAtual.detalhes_criterios.vocabulario.palavras_esperadas_utilizadas.map(
+                                    (palavra, idx) => (
+                                      <span
+                                        key={idx}
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"
+                                      >
+                                        <CheckCircle2 className="w-3 h-3" />
+                                        {palavra}
+                                      </span>
+                                    )
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-400 italic">
+                                  Nenhuma palavra-chave esperada identificada diretamente.
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Adequação ao Tema e Variedade */}
+                            <div className="grid grid-cols-2 gap-2 pt-1">
+                              <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                  Adequação ao Tema
+                                </span>
+                                <span
+                                  className={`text-xs font-bold ${
+                                    analiseAtual.detalhes_criterios.vocabulario.adequacao_tema
+                                      ? "text-emerald-400"
+                                      : "text-amber-400"
+                                  }`}
+                                >
+                                  {analiseAtual.detalhes_criterios.vocabulario.adequacao_tema
+                                    ? "Adequada ao contexto"
+                                    : "Parcialmente adequada"}
+                                </span>
+                              </div>
+                              <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                  Variedade de Palavras
+                                </span>
+                                <span className="text-xs font-bold text-blue-300">
+                                  {analiseAtual.detalhes_criterios.vocabulario.variedade || "Adequada ao nível A1"}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Observação Pedagógica */}
+                            {analiseAtual.detalhes_criterios.vocabulario.observacoes && (
+                              <div className="p-2.5 bg-blue-950/20 border border-blue-900/40 rounded-lg text-xs text-blue-200">
+                                <p className="font-medium">{analiseAtual.detalhes_criterios.vocabulario.observacoes}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* 3. FLUÊNCIA */}
+                        {criterioAtivo === "fluencia" && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                              <span className="text-xs font-bold text-slate-300">O que foi observado:</span>
+                              <span className="text-[11px] font-bold text-amber-400">
+                                Pausas excessivas, hesitações e ritmo de fala
+                              </span>
+                            </div>
+
+                            {/* Ritmo, Pausas e Hesitações */}
+                            <div className="grid grid-cols-3 gap-2">
+                              <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                  Ritmo de Fala
+                                </span>
+                                <span className="text-xs font-bold text-amber-300">
+                                  {analiseAtual.detalhes_criterios.fluencia.ritmo || "Natural"}
+                                </span>
+                              </div>
+                              <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                  Pausas Longas (&gt;1.5s)
+                                </span>
+                                <span
+                                  className={`text-xs font-bold ${
+                                    (analiseAtual.detalhes_criterios.fluencia.pausas_excessivas || 0) === 0
+                                      ? "text-emerald-400"
+                                      : "text-amber-400"
+                                  }`}
+                                >
+                                  {analiseAtual.detalhes_criterios.fluencia.pausas_excessivas === 0
+                                    ? "Sem pausas longas"
+                                    : `${analiseAtual.detalhes_criterios.fluencia.pausas_excessivas} pausa(s)`}
+                                </span>
+                              </div>
+                              <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                  Hesitações (uh/um)
+                                </span>
+                                <span
+                                  className={`text-xs font-bold ${
+                                    (analiseAtual.detalhes_criterios.fluencia.hesitacoes || 0) === 0
+                                      ? "text-emerald-400"
+                                      : "text-amber-400"
+                                  }`}
+                                >
+                                  {analiseAtual.detalhes_criterios.fluencia.hesitacoes === 0
+                                    ? "Sem hesitações"
+                                    : `${analiseAtual.detalhes_criterios.fluencia.hesitacoes} hesitação(ões)`}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Observação Pedagógica */}
+                            {analiseAtual.detalhes_criterios.fluencia.observacoes && (
+                              <div className="p-2.5 bg-amber-950/20 border border-amber-900/40 rounded-lg text-xs text-amber-200">
+                                <p className="font-medium">{analiseAtual.detalhes_criterios.fluencia.observacoes}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* 4. ESTRUTURA */}
+                        {criterioAtivo === "estrutura" && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                              <span className="text-xs font-bold text-slate-300">O que foi observado:</span>
+                              <span className="text-[11px] font-bold text-emerald-400">
+                                Frases completas e ordem das palavras
+                              </span>
+                            </div>
+
+                            {/* Frase Completa e Ordem */}
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                  Frase Completa
+                                </span>
+                                <span
+                                  className={`text-xs font-bold ${
+                                    analiseAtual.detalhes_criterios.estrutura.frase_completa
+                                      ? "text-emerald-400"
+                                      : "text-amber-400"
+                                  }`}
+                                >
+                                  {analiseAtual.detalhes_criterios.estrutura.frase_completa
+                                    ? "Frase completa (Sujeito + Verbo)"
+                                    : "Palavra solta / fragmento"}
+                                </span>
+                              </div>
+                              <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                  Ordem das Palavras (SVO)
+                                </span>
+                                <span
+                                  className={`text-xs font-bold ${
+                                    analiseAtual.detalhes_criterios.estrutura.ordem_palavras_correta
+                                      ? "text-emerald-400"
+                                      : "text-amber-400"
+                                  }`}
+                                >
+                                  {analiseAtual.detalhes_criterios.estrutura.ordem_palavras_correta
+                                    ? "Ordem natural e correta"
+                                    : "Atenção à ordem das palavras"}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Observação Pedagógica */}
+                            {analiseAtual.detalhes_criterios.estrutura.observacoes && (
+                              <div className="p-2.5 bg-emerald-950/20 border border-emerald-900/40 rounded-lg text-xs text-emerald-200">
+                                <p className="font-medium">{analiseAtual.detalhes_criterios.estrutura.observacoes}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Feedback */}
               <div className="space-y-2 mb-4">

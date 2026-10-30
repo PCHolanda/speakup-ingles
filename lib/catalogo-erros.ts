@@ -13,13 +13,14 @@ export const CODIGOS_ERRO = [
   "Y_INICIAL",
   "H_ASPIRADO",
   "CONSOANTE_FINAL",
+  "CLAREZA",
+  "ENTONACAO",
   "OUTRO",
   "NENHUM",
 ] as const;
 
 export type CodigoErro = (typeof CODIGOS_ERRO)[number];
 
-/** Ilustração da boca usada em components/feedback/DicaBoca.tsx */
 export type IlustracaoBoca =
   | "lingua_entre_dentes"
   | "lingua_recuada"
@@ -124,6 +125,24 @@ export const CATALOGO_ERROS: Record<CodigoErro, EntradaCatalogo> = {
     dica: "Pronuncie suavemente a consoante final sem sumir com ela: ca-t.",
     ilustracao: "consoante_final",
     exemplo: "cat → ké / time → taimi",
+  },
+  CLAREZA: {
+    codigo: "CLAREZA",
+    nome: "Clareza da voz",
+    descricao: "Fala com pouca projeção, abafada ou sussurrada.",
+    fonemas: [],
+    dica: "Abra um pouco mais a boca e fale com voz firme e clara em direção ao microfone.",
+    ilustracao: "neutra",
+    exemplo: "fala abafada ou sussurrada",
+  },
+  ENTONACAO: {
+    codigo: "ENTONACAO",
+    nome: "Entonação da frase",
+    descricao: "Melodia ou ritmo excessivamente monótono ou inseguro.",
+    fonemas: [],
+    dica: "Fale com segurança, descendo o tom no final da frase afirmativa como quem conta uma história.",
+    ilustracao: "neutra",
+    exemplo: "tom monótono ou interrogativo em afirmações",
   },
   OUTRO: {
     codigo: "OUTRO",
