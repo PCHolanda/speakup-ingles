@@ -8,11 +8,19 @@
  *   4. Estrutura: Uso de frases completas, ordem das palavras.
  * Somente servidor.
  */
-import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
 import { z } from "zod";
 import { CODIGOS_ERRO, CodigoErro, CATALOGO_ERROS } from "@/lib/catalogo-erros";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  criarClienteGemini,
+  MODELO_TRANSCRICAO_PADRAO,
+  obterChaveGemini,
+  removerArquivoGemini,
+  transcreverAudioGemini,
+  uploadAudioGemini,
+  type ArquivoGeminiRemoto,
+  type ResultadoTranscricaoGemini,
+} from "@/lib/pronuncia/transcrever";
 
 export class ConfigIAAusenteError extends Error {}
 
@@ -307,6 +315,7 @@ export interface AnalisePronuncia {
     chamada1: any;
     motor: any;
     chamada2: any;
+    transcricao_gemini?: ResultadoTranscricaoGemini | null;
   };
 }
 
@@ -327,22 +336,41 @@ export const MODELOS_RECOMENDADOS = [
     descricao: "Ultra rápido, menor latência e ideal para contornar picos de demanda",
   },
   {
-    id: "gemini-2.5-flash",
-    nome: "Gemini 2.5 Flash",
-    descricao: "Versão consagrada e econômica",
+    id: "gemini-3.1-flash-lite",
+    nome: "Gemini 3.1 Flash-Lite",
+    descricao: "Econômico e ágil para alta frequência de avaliações",
   },
   {
-    id: "gemini-flash-latest",
-    nome: "Gemini Flash Latest",
-    descricao: "Apelido dinâmico para a versão mais recente",
+    id: "gemini-3.5-transcribe",
+    nome: "Gemini 3.5 Transcribe + 3.8 Flash",
+    descricao: "Motor dedicado Speech-to-Text combinado com avaliador pedagógico",
   },
 ];
+
+function normalizarModeloAvaliador(modeloBruto?: string | null): string | null {
+  if (!modeloBruto) return null;
+  const limpo = modeloBruto.trim().replace(/^models\//, "");
+  if (!limpo) return null;
+  if (
+    limpo.startsWith("gemini-1.5") ||
+    limpo.startsWith("gemini-2.0") ||
+    limpo.startsWith("gemini-2.5")
+  ) {
+    return "gemini-3.8-flash";
+  }
+  // `gemini-3.5-transcribe` já roda sempre na Etapa 1 (Speech-to-Text);
+  // a Etapa 2 (rubrica JSON pedagógica) usa `gemini-3.8-flash`.
+  if (limpo === MODELO_TRANSCRICAO_PADRAO || limpo.startsWith("gemini-3.5-transcribe")) {
+    return "gemini-3.8-flash";
+  }
+  return limpo;
+}
 
 let modeloAtivoCache: string = "gemini-3.8-flash";
 let ultimoFetchConfig = 0;
 
 export function atualizarModeloAtivoCache(modelo: string) {
-  modeloAtivoCache = modelo.replace(/^models\//, "").trim();
+  modeloAtivoCache = normalizarModeloAvaliador(modelo) || "gemini-3.8-flash";
   ultimoFetchConfig = Date.now();
 }
 
@@ -361,21 +389,20 @@ export async function obterModeloConfigurado(): Promise<string> {
       .maybeSingle();
 
     if (!error && data?.valor) {
-      modeloAtivoCache = data.valor.trim();
-      ultimoFetchConfig = agora;
-      return modeloAtivoCache;
+      const normalizado = normalizarModeloAvaliador(data.valor);
+      if (normalizado) {
+        modeloAtivoCache = normalizado;
+        ultimoFetchConfig = agora;
+        return modeloAtivoCache;
+      }
     }
   } catch (err) {
     console.warn("[pronuncia] Aviso ao ler configuracoes do banco:", err);
   }
 
-  const envModel = process.env.GEMINI_MODEL?.trim().replace(/^models\//, "");
-  if (
-    envModel &&
-    !envModel.startsWith("gemini-1.5") &&
-    !envModel.startsWith("gemini-2.0")
-  ) {
-    modeloAtivoCache = envModel;
+  const envNormalizado = normalizarModeloAvaliador(process.env.GEMINI_MODEL);
+  if (envNormalizado) {
+    modeloAtivoCache = envNormalizado;
   }
 
   return modeloAtivoCache;
@@ -389,14 +416,13 @@ export async function obterModelosCandidatos(): Promise<string[]> {
       "gemini-3.8-flash",
       "gemini-3.6-flash",
       "gemini-3.5-flash-lite",
-      "gemini-2.5-flash",
-      "gemini-flash-latest",
+      "gemini-3.1-flash-lite",
     ])
   );
 }
 
 async function executarComFallback(
-  chamadaFn: (genModel: ReturnType<typeof google>, nomeModelo: string) => Promise<{ text: string }>
+  chamadaFn: (nomeModelo: string) => Promise<{ text: string }>
 ): Promise<{ text: string; modeloUsado: string }> {
   const modelos = await obterModelosCandidatos();
   let ultimoErro: unknown = null;
@@ -404,8 +430,7 @@ async function executarComFallback(
   for (const modelo of modelos) {
     for (let tentativa = 1; tentativa <= 2; tentativa++) {
       try {
-        const genModel = google(modelo);
-        const res = await chamadaFn(genModel, modelo);
+        const res = await chamadaFn(modelo);
         modeloAtivoCache = modelo;
         return { text: res.text, modeloUsado: modelo };
       } catch (err: unknown) {
@@ -451,9 +476,11 @@ export async function analisarPronuncia(
   audioWav: Uint8Array,
   pergunta: ContextoPergunta
 ): Promise<AnalisePronuncia> {
-  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+  if (!obterChaveGemini()) {
     throw new ConfigIAAusenteError("GOOGLE_GENERATIVE_AI_API_KEY não configurada");
   }
+
+  const ai = criarClienteGemini();
 
   const tipoMapeado =
     pergunta.tipo === "imagem"
@@ -479,206 +506,296 @@ export async function analisarPronuncia(
     pergunta.texto_referencia ||
     (respostaEsperada !== "não informada" ? respostaEsperada : pergunta.enunciado);
 
-  const inputAudicao = `PERGUNTA: ${pergunta.enunciado}
+  let arquivoRemoto: ArquivoGeminiRemoto | null = null;
+  let transcricaoGemini: ResultadoTranscricaoGemini | null = null;
+
+  try {
+    // Etapa 1: Upload na Gemini Files API + Transcrição precisa com `gemini-3.5-transcribe`
+    // (modo verbatim + marcações de tempo em nível de palavra + detecção automática de idioma)
+    try {
+      arquivoRemoto = await uploadAudioGemini(
+        audioWav,
+        "audio/wav",
+        `pronuncia-${Date.now()}.wav`,
+        ai
+      );
+
+      transcricaoGemini = await transcreverAudioGemini({
+        arquivoRemoto,
+        modo: "verbatim",
+        marcarTempoPalavras: true,
+        idiomas: [],
+        timeoutMs: 9000,
+      });
+
+      console.log("[pronuncia] Transcrição gemini-3.5-transcribe concluída:", {
+        texto: transcricaoGemini.texto,
+        palavras: transcricaoGemini.palavras.length,
+        pausasLongas: transcricaoGemini.metricasFluencia.pausasLongas,
+      });
+    } catch (errTranscricao) {
+      console.warn(
+        "[pronuncia] Aviso: falha temporária no gemini-3.5-transcribe; prosseguindo com avaliação multimodal direta:",
+        errTranscricao instanceof Error ? errTranscricao.message : String(errTranscricao)
+      );
+    }
+
+    const blocoTelemetriaTranscricao = transcricaoGemini
+      ? `\nTRANSCRIÇÃO_OFICIAL_GEMINI_3_5_TRANSCRIBE (verbatim): "${transcricaoGemini.texto || "[sem fala detectada]"}"
+MARCAÇÕES_TEMPO_PALAVRAS: ${
+          transcricaoGemini.palavras.length > 0
+            ? transcricaoGemini.palavras
+                .map((p) => `${p.texto} (${p.inicio ?? "?"}->${p.fim ?? "?"})`)
+                .join(", ")
+            : "nenhuma palavra marcada"
+        }
+TELEMETRIA_PAUSAS_REAIS: pausas_longas_acima_1_5s=${transcricaoGemini.metricasFluencia.pausasLongas}, maior_pausa_s=${transcricaoGemini.metricasFluencia.maiorPausaSegundos}, hesitacoes_detectadas=${transcricaoGemini.metricasFluencia.hesitacoesDetectadas}`
+      : "";
+
+    const inputAudicao = `PERGUNTA: ${pergunta.enunciado}
 TIPO_ATIVIDADE: ${tipoMapeado}
 CONTEXTO_IMAGEM: ${contextoImagem}
 RESPOSTAS_ESPERADAS: ${respostaEsperada}
-FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clareza e estrutura"}
-ÁUDIO DO ALUNO: (arquivo de áudio .wav anexo)`;
+FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clareza e estrutura"}${blocoTelemetriaTranscricao}
+ÁUDIO DO ALUNO: (arquivo de áudio .wav anexo — ouça atentamente os fonemas, clareza e entonação e utilize a transcrição e telemetria acima como apoio fiel)`;
 
-  // Execução direta com fallback resiliente entre versões do Gemini
-  const resultado = await executarComFallback(async (genModel) => {
-    return await generateText({
-      model: genModel,
-      system:
-        PROMPT_AVALIACAO_PROFUNDA +
-        "\n\nCRÍTICO: Retorne ESTRITAMENTE um JSON válido com todos os campos solicitados. Não inclua blocos markdown (```json).",
-      temperature: 0.0,
-      maxRetries: 0,
-      abortSignal: AbortSignal.timeout(12000),
-      messages: [
+    const blocoAudioInput = arquivoRemoto
+      ? {
+          type: "audio" as const,
+          uri: arquivoRemoto.uri,
+          mime_type: "audio/wav" as const,
+        }
+      : {
+          type: "audio" as const,
+          data: Buffer.from(audioWav).toString("base64"),
+          mime_type: "audio/wav" as const,
+        };
+
+    // Etapa 2: Avaliação pedagógica profunda dos 4 critérios via Gemini Interactions API
+    const resultado = await executarComFallback(async (nomeModelo) => {
+      const interaction = await ai.interactions.create(
         {
-          role: "user",
-          content: [
+          model: nomeModelo,
+          store: false,
+          system_instruction:
+            PROMPT_AVALIACAO_PROFUNDA +
+            "\n\nCRÍTICO: Retorne ESTRITAMENTE um JSON válido com todos os campos solicitados. Não inclua blocos markdown (```json).",
+          input: [
             { type: "text", text: inputAudicao },
-            { type: "file", mediaType: "audio/wav", data: audioWav },
+            blocoAudioInput,
           ],
+          generation_config: {
+            temperature: 0.0,
+          },
         },
-      ],
+        {
+          timeout: 15000,
+        }
+      );
+
+      const textoSaida = (interaction.output_text ?? "").trim();
+      if (!textoSaida) {
+        throw new Error(`Modelo ${nomeModelo} retornou resposta vazia.`);
+      }
+      return { text: textoSaida };
     });
-  });
 
-  const modeloNome = resultado.modeloUsado;
-  console.log("[pronuncia] Avaliação profunda concluída com sucesso usando:", modeloNome);
+    const modeloNome = transcricaoGemini
+      ? `${MODELO_TRANSCRICAO_PADRAO} + ${resultado.modeloUsado}`
+      : resultado.modeloUsado;
+    console.log("[pronuncia] Avaliação profunda concluída com sucesso usando:", modeloNome);
 
-  const textoPuro = resultado.text.replace(/```json/g, "").replace(/```/g, "").trim();
-  let jsonResposta: any;
-  try {
-    jsonResposta = JSON.parse(textoPuro);
-  } catch {
-    const jsonMatch = textoPuro.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonResposta = JSON.parse(jsonMatch[0]);
-    } else {
-      throw new Error("Não foi possível decodificar a resposta profunda da IA.");
+    const textoPuro = resultado.text.replace(/```json/g, "").replace(/```/g, "").trim();
+    let jsonResposta: any;
+    try {
+      jsonResposta = JSON.parse(textoPuro);
+    } catch {
+      const jsonMatch = textoPuro.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        jsonResposta = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error("Não foi possível decodificar a resposta profunda da IA.");
+      }
     }
-  }
 
-  const transcricao = (jsonResposta.transcricao || "").trim();
-  const temFala = transcricao.length > 0 && transcricao !== "[inaudível]" && transcricao !== "[]";
+    const transcricaoFinal = (
+      transcricaoGemini?.texto?.trim() ||
+      jsonResposta.transcricao ||
+      ""
+    ).trim();
+    const temFala =
+      transcricaoFinal.length > 0 &&
+      transcricaoFinal !== "[inaudível]" &&
+      transcricaoFinal !== "[]";
 
-  const audioInvalido =
-    !temFala &&
-    (jsonResposta.status_audio === "audio_vazio" ||
-      jsonResposta.status_audio === "apenas_ruido" ||
-      jsonResposta.status_audio === "apenas_portugues" ||
-      jsonResposta.status_audio === "incompreensivel");
+    const audioInvalido =
+      !temFala &&
+      (jsonResposta.status_audio === "audio_vazio" ||
+        jsonResposta.status_audio === "apenas_ruido" ||
+        jsonResposta.status_audio === "apenas_portugues" ||
+        jsonResposta.status_audio === "incompreensivel");
 
-  if (audioInvalido) {
-    return {
-      transcricao: transcricao || "(nenhuma fala compreendida)",
-      respondeu_pergunta: false,
-      nota_pronuncia: 1,
-      nota_fluencia: 1,
-      nota_vocabulario: 1,
-      nota_estrutura: 1,
-      resultado: "try_again",
-      ponto_forte: "Ouvimos sua tentativa de gravação!",
-      ponto_melhorar: "Fale um pouquinho mais perto do microfone e tente responder em inglês.",
-      palavras: [],
-      frase_modelo: fraseExemploPadrao,
-      modelo_utilizado: modeloNome,
-      detalhes_criterios: {
-        pronuncia: {
-          nota: 1,
-          clareza: "abafada",
-          entonacao: "insegura",
-          sons_especificos: {},
-          observacoes: "Não foi possível identificar sons em inglês no áudio gravado.",
+    if (audioInvalido) {
+      return {
+        transcricao: transcricaoFinal || "(nenhuma fala compreendida)",
+        respondeu_pergunta: false,
+        nota_pronuncia: 1,
+        nota_fluencia: 1,
+        nota_vocabulario: 1,
+        nota_estrutura: 1,
+        resultado: "try_again",
+        ponto_forte: "Ouvimos sua tentativa de gravação!",
+        ponto_melhorar: "Fale um pouquinho mais perto do microfone e tente responder em inglês.",
+        palavras: [],
+        frase_modelo: fraseExemploPadrao,
+        modelo_utilizado: modeloNome,
+        detalhes_criterios: {
+          pronuncia: {
+            nota: 1,
+            clareza: "abafada",
+            entonacao: "insegura",
+            sons_especificos: {},
+            observacoes: "Não foi possível identificar sons em inglês no áudio gravado.",
+          },
+          vocabulario: {
+            nota: 1,
+            palavras_esperadas_utilizadas: [],
+            variedade: "restrita",
+            adequacao_tema: false,
+            observacoes: "Sem palavras em inglês identificadas.",
+          },
+          fluencia: {
+            nota: 1,
+            pausas_excessivas: 1,
+            hesitacoes: 1,
+            ritmo: "fragmentado",
+            observacoes: "Áudio sem fala identificável.",
+          },
+          estrutura: {
+            nota: 1,
+            frase_completa: false,
+            ordem_palavras_correta: false,
+            observacoes: "Sem estrutura identificada.",
+          },
         },
-        vocabulario: {
-          nota: 1,
-          palavras_esperadas_utilizadas: [],
-          variedade: "restrita",
-          adequacao_tema: false,
-          observacoes: "Sem palavras em inglês identificadas.",
-        },
-        fluencia: {
-          nota: 1,
-          pausas_excessivas: 1,
-          hesitacoes: 1,
-          ritmo: "fragmentado",
-          observacoes: "Áudio sem fala identificável.",
-        },
-        estrutura: {
-          nota: 1,
-          frase_completa: false,
-          ordem_palavras_correta: false,
-          observacoes: "Sem estrutura identificada.",
-        },
+      };
+    }
+
+    // Extrair notas e detalhes dos 4 critérios
+    const c = jsonResposta.criterios || {};
+    const cPronuncia = c.pronuncia || {};
+    const cVocabulario = c.vocabulario || {};
+    const cFluencia = c.fluencia || {};
+    const cEstrutura = c.estrutura || {};
+
+    const notaPronuncia = Math.min(Math.max(Number(cPronuncia.nota) || 3, 1), 4);
+    const notaVocabulario = Math.min(Math.max(Number(cVocabulario.nota) || 3, 1), 4);
+    const notaFluencia = Math.min(Math.max(Number(cFluencia.nota) || 3, 1), 4);
+    const notaEstrutura = Math.min(Math.max(Number(cEstrutura.nota) || 3, 1), 4);
+
+    // Palavras avaliadas com feedback fonético
+    const rawPalavras: Array<any> = jsonResposta.palavras_avaliadas || [];
+    const palavrasAdaptadas: PalavraAnalise[] = rawPalavras.map((p: any) => {
+      let status: "ok" | "atencao" | "erro" = "ok";
+      if (p.inteligibilidade === "nao_entendida") status = "erro";
+      else if (p.inteligibilidade === "com_esforco") status = "atencao";
+
+      const codigoValido = p.codigo_erro && p.codigo_erro in CATALOGO_ERROS ? p.codigo_erro : null;
+
+      let dica = p.dica || null;
+      if (status !== "ok" && !dica && codigoValido && CATALOGO_ERROS[codigoValido as CodigoErro]) {
+        dica = CATALOGO_ERROS[codigoValido as CodigoErro].dica;
+      }
+      if (status !== "ok" && !dica) {
+        dica = `Ouça a pronúncia de "${p.palavra_alvo || p.palavra}" e tente repetir com clareza.`;
+      }
+
+      return {
+        palavra: String(p.palavra || "").toLowerCase().replace(/[.,!?]/g, ""),
+        palavra_alvo: String(p.palavra_alvo || p.palavra || "").toLowerCase().replace(/[.,!?]/g, ""),
+        ouvido: String(p.palavra || ""),
+        nota: Math.round((Number(p.precisao) || 90) / 10),
+        status,
+        codigo_erro: codigoValido,
+        dica,
+      };
+    });
+
+    const fraseModeloFinal =
+      jsonResposta.resposta_ideal?.frase && jsonResposta.resposta_ideal.frase.trim().length > 0
+        ? jsonResposta.resposta_ideal.frase.trim()
+        : fraseExemploPadrao;
+
+    const resultadoFinal: "good_job" | "try_again" =
+      notaPronuncia >= 3 && notaVocabulario >= 2 && notaEstrutura >= 2 ? "good_job" : "try_again";
+
+    const pausasCalculadas =
+      transcricaoGemini?.metricasFluencia.pausasLongas ?? (cFluencia.pausas_excessivas || 0);
+    const hesitacoesCalculadas = Math.max(
+      Number(cFluencia.hesitacoes) || 0,
+      transcricaoGemini?.metricasFluencia.hesitacoesDetectadas ?? 0
+    );
+
+    const detalhesCriterios: DetalhesCriterios = {
+      pronuncia: {
+        nota: notaPronuncia,
+        clareza: cPronuncia.clareza || "nitida",
+        entonacao: cPronuncia.entonacao || "natural",
+        sons_especificos: cPronuncia.sons_especificos || {},
+        observacoes: cPronuncia.observacoes || "Pronúncia avaliada com sons e clareza observados.",
+      },
+      vocabulario: {
+        nota: notaVocabulario,
+        palavras_esperadas_utilizadas: cVocabulario.palavras_esperadas_utilizadas || [],
+        variedade: cVocabulario.variedade || "adequada",
+        adequacao_tema: cVocabulario.adequacao_tema ?? true,
+        observacoes: cVocabulario.observacoes || "Vocabulário adequado ao tema da atividade.",
+      },
+      fluencia: {
+        nota: notaFluencia,
+        pausas_excessivas: pausasCalculadas,
+        hesitacoes: hesitacoesCalculadas,
+        ritmo: cFluencia.ritmo || "fluido",
+        observacoes: cFluencia.observacoes || "Ritmo e pausas observados na fala.",
+      },
+      estrutura: {
+        nota: notaEstrutura,
+        frase_completa: cEstrutura.frase_completa ?? true,
+        ordem_palavras_correta: cEstrutura.ordem_palavras_correta ?? true,
+        observacoes: cEstrutura.observacoes || "Estrutura gramatical e ordem das palavras observadas.",
       },
     };
-  }
-
-  // Extrair notas e detalhes dos 4 critérios
-  const c = jsonResposta.criterios || {};
-  const cPronuncia = c.pronuncia || {};
-  const cVocabulario = c.vocabulario || {};
-  const cFluencia = c.fluencia || {};
-  const cEstrutura = c.estrutura || {};
-
-  const notaPronuncia = Math.min(Math.max(Number(cPronuncia.nota) || 3, 1), 4);
-  const notaVocabulario = Math.min(Math.max(Number(cVocabulario.nota) || 3, 1), 4);
-  const notaFluencia = Math.min(Math.max(Number(cFluencia.nota) || 3, 1), 4);
-  const notaEstrutura = Math.min(Math.max(Number(cEstrutura.nota) || 3, 1), 4);
-
-  // Palavras avaliadas com feedback fonético
-  const rawPalavras: Array<any> = jsonResposta.palavras_avaliadas || [];
-  const palavrasAdaptadas: PalavraAnalise[] = rawPalavras.map((p: any) => {
-    let status: "ok" | "atencao" | "erro" = "ok";
-    if (p.inteligibilidade === "nao_entendida") status = "erro";
-    else if (p.inteligibilidade === "com_esforco") status = "atencao";
-
-    const codigoValido = p.codigo_erro && p.codigo_erro in CATALOGO_ERROS ? p.codigo_erro : null;
-
-    let dica = p.dica || null;
-    if (status !== "ok" && !dica && codigoValido && CATALOGO_ERROS[codigoValido as CodigoErro]) {
-      dica = CATALOGO_ERROS[codigoValido as CodigoErro].dica;
-    }
-    if (status !== "ok" && !dica) {
-      dica = `Ouça a pronúncia de "${p.palavra_alvo || p.palavra}" e tente repetir com clareza.`;
-    }
 
     return {
-      palavra: String(p.palavra || "").toLowerCase().replace(/[.,!?]/g, ""),
-      palavra_alvo: String(p.palavra_alvo || p.palavra || "").toLowerCase().replace(/[.,!?]/g, ""),
-      ouvido: String(p.palavra || ""),
-      nota: Math.round((Number(p.precisao) || 90) / 10),
-      status,
-      codigo_erro: codigoValido,
-      dica,
+      transcricao: transcricaoFinal,
+      respondeu_pergunta: cVocabulario.adequacao_tema ?? true,
+      nota_pronuncia: notaPronuncia,
+      nota_fluencia: notaFluencia,
+      nota_vocabulario: notaVocabulario,
+      nota_estrutura: notaEstrutura,
+      resultado: resultadoFinal,
+      ponto_forte:
+        jsonResposta.feedback_pedagogico?.ponto_forte || "Muito bom empenho na resposta em inglês!",
+      ponto_melhorar:
+        jsonResposta.feedback_pedagogico?.ponto_melhorar ||
+        "Continue praticando para aperfeiçoar sua pronúncia.",
+      palavras: palavrasAdaptadas,
+      frase_modelo: fraseModeloFinal,
+      modelo_utilizado: modeloNome,
+      detalhes_criterios: detalhesCriterios,
+      analise_detalhada: {
+        chamada1: jsonResposta,
+        motor: { fluencia_motor: notaFluencia * 25, palavras: palavrasAdaptadas },
+        chamada2: jsonResposta.feedback_pedagogico || {},
+        transcricao_gemini: transcricaoGemini,
+      },
     };
-  });
-
-  const fraseModeloFinal =
-    jsonResposta.resposta_ideal?.frase && jsonResposta.resposta_ideal.frase.trim().length > 0
-      ? jsonResposta.resposta_ideal.frase.trim()
-      : fraseExemploPadrao;
-
-  const resultadoFinal: "good_job" | "try_again" =
-    notaPronuncia >= 3 && notaVocabulario >= 2 && notaEstrutura >= 2 ? "good_job" : "try_again";
-
-  const detalhesCriterios: DetalhesCriterios = {
-    pronuncia: {
-      nota: notaPronuncia,
-      clareza: cPronuncia.clareza || "nitida",
-      entonacao: cPronuncia.entonacao || "natural",
-      sons_especificos: cPronuncia.sons_especificos || {},
-      observacoes: cPronuncia.observacoes || "Pronúncia avaliada com sons e clareza observados.",
-    },
-    vocabulario: {
-      nota: notaVocabulario,
-      palavras_esperadas_utilizadas: cVocabulario.palavras_esperadas_utilizadas || [],
-      variedade: cVocabulario.variedade || "adequada",
-      adequacao_tema: cVocabulario.adequacao_tema ?? true,
-      observacoes: cVocabulario.observacoes || "Vocabulário adequado ao tema da atividade.",
-    },
-    fluencia: {
-      nota: notaFluencia,
-      pausas_excessivas: cFluencia.pausas_excessivas || 0,
-      hesitacoes: cFluencia.hesitacoes || 0,
-      ritmo: cFluencia.ritmo || "fluido",
-      observacoes: cFluencia.observacoes || "Ritmo e pausas observados na fala.",
-    },
-    estrutura: {
-      nota: notaEstrutura,
-      frase_completa: cEstrutura.frase_completa ?? true,
-      ordem_palavras_correta: cEstrutura.ordem_palavras_correta ?? true,
-      observacoes: cEstrutura.observacoes || "Estrutura gramatical e ordem das palavras observadas.",
-    },
-  };
-
-  return {
-    transcricao: jsonResposta.transcricao || "",
-    respondeu_pergunta: cVocabulario.adequacao_tema ?? true,
-    nota_pronuncia: notaPronuncia,
-    nota_fluencia: notaFluencia,
-    nota_vocabulario: notaVocabulario,
-    nota_estrutura: notaEstrutura,
-    resultado: resultadoFinal,
-    ponto_forte:
-      jsonResposta.feedback_pedagogico?.ponto_forte || "Muito bom empenho na resposta em inglês!",
-    ponto_melhorar:
-      jsonResposta.feedback_pedagogico?.ponto_melhorar ||
-      "Continue praticando para aperfeiçoar sua pronúncia.",
-    palavras: palavrasAdaptadas,
-    frase_modelo: fraseModeloFinal,
-    modelo_utilizado: modeloNome,
-    detalhes_criterios: detalhesCriterios,
-    analise_detalhada: {
-      chamada1: jsonResposta,
-      motor: { fluencia_motor: notaFluencia * 25, palavras: palavrasAdaptadas },
-      chamada2: jsonResposta.feedback_pedagogico || {},
-    },
-  };
+  } finally {
+    if (arquivoRemoto?.name) {
+      await Promise.race([
+        removerArquivoGemini(arquivoRemoto.name, ai),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
+    }
+  }
 }

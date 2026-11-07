@@ -1921,6 +1921,14 @@ end $$;`;
                   </div>
 
                   <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Motor Speech-to-Text (Áudio)</p>
+                    <p className="text-sm font-black text-emerald-400 font-mono mt-1 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      gemini-3.5-transcribe
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800">
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Modelo Ativo no Momento</p>
                     <p className="text-base font-black text-fuchsia-400 font-mono mt-1 flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-fuchsia-400 shrink-0" />

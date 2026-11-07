@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
+import {
+  criarClienteGemini,
+  gerarWavSilencioTeste,
+  MODELO_TRANSCRICAO_PADRAO,
+  obterChaveGemini,
+  transcreverAudioGemini,
+} from "@/lib/pronuncia/transcrever";
 
 const testSchema = z.object({
   modelo: z.string().trim().min(3, "Nome do modelo inválido"),
@@ -19,7 +24,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    if (!obterChaveGemini()) {
       return NextResponse.json(
         { error: "GOOGLE_GENERATIVE_AI_API_KEY não está configurada no servidor." },
         { status: 400 }
@@ -29,21 +34,47 @@ export async function POST(request: NextRequest) {
     const cleanModel = result.data.modelo.replace(/^models\//, "").trim();
     const inicio = Date.now();
 
-    const genModel = google(cleanModel);
-    const res = await generateText({
-      model: genModel,
-      prompt: "Reply with the exact word 'OK'.",
-      temperature: 0.0,
-      maxRetries: 0,
-      abortSignal: AbortSignal.timeout(8000),
-    });
+    if (cleanModel === MODELO_TRANSCRICAO_PADRAO || cleanModel.startsWith("gemini-3.5-transcribe")) {
+      const wavTeste = gerarWavSilencioTeste(400);
+      await transcreverAudioGemini({
+        audioBytes: wavTeste,
+        mimeType: "audio/wav",
+        nomeArquivo: "teste-admin.wav",
+        modo: "verbatim",
+        timeoutMs: 10000,
+      });
+
+      const tempoMs = Date.now() - inicio;
+      return NextResponse.json({
+        sucesso: true,
+        modelo: MODELO_TRANSCRICAO_PADRAO,
+        resposta: "OK (Files API + Speech-to-Text)",
+        tempo_ms: tempoMs,
+        mensagem: `Teste bem-sucedido! Upload e transcrição via ${MODELO_TRANSCRICAO_PADRAO} concluídos em ${tempoMs}ms.`,
+      });
+    }
+
+    const ai = criarClienteGemini();
+    const interaction = await ai.interactions.create(
+      {
+        model: cleanModel,
+        store: false,
+        input: "Reply with the exact word 'OK'.",
+        generation_config: {
+          temperature: 0.0,
+        },
+      },
+      {
+        timeout: 8000,
+      }
+    );
 
     const tempoMs = Date.now() - inicio;
 
     return NextResponse.json({
       sucesso: true,
       modelo: cleanModel,
-      resposta: res.text.trim(),
+      resposta: (interaction.output_text ?? "OK").trim(),
       tempo_ms: tempoMs,
       mensagem: `Teste bem-sucedido! O modelo respondeu em ${tempoMs}ms.`,
     });

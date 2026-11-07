@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { atualizarModeloAtivoCache, MODELOS_RECOMENDADOS } from "@/lib/pronuncia/analisar";
+import { MODELO_TRANSCRICAO_PADRAO, obterChaveGemini } from "@/lib/pronuncia/transcrever";
 
 const configSchema = z.object({
   modelo: z.string().trim().min(3, "Nome do modelo inválido"),
@@ -32,8 +33,9 @@ export async function GET() {
 
     return NextResponse.json({
       modelo_atual: modeloAtual,
+      modelo_transcricao: MODELO_TRANSCRICAO_PADRAO,
       modelos_recomendados: MODELOS_RECOMENDADOS,
-      tem_api_key: !!process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+      tem_api_key: !!obterChaveGemini(),
       tabela_existe: tabelaExiste,
     });
   } catch (error: unknown) {
