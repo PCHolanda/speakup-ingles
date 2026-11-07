@@ -77,6 +77,8 @@ export interface OpcoesTranscricaoGemini {
   idiomas?: string[];
   /** Tempo limite em ms para a chamada de transcrição (padrão: 15000). */
   timeoutMs?: number;
+  /** Se true (padrão), faz fallback automático via Files API + Interactions API caso `gemini-3.5-transcribe` não esteja habilitado na chave. */
+  permitirFallbackMultimodal?: boolean;
 }
 
 export interface ResultadoTranscricaoGemini {
@@ -270,14 +272,46 @@ function calcularMetricasFluencia(
   };
 }
 
+let transcribeNativoIndisponivelAte = 0;
+
+function construirPromptFallbackTranscricao(opcoes: {
+  modo: ModoTranscricaoGemini;
+  diarizacao: boolean;
+  vocabulario: string[];
+  idiomas: string[];
+}): string {
+  const instrucoes: string[] = [
+    opcoes.modo === "smart"
+      ? "Generate a clean, smart transcript of the speech in this audio file. Remove filler words (um, uh, ah), stutters, and false starts, resolve inline self-corrections, and apply clean punctuation and formatting."
+      : "Generate an exact verbatim word-for-word transcript of the speech in this audio file, preserving every spoken word without correcting grammar or pronunciation mistakes.",
+  ];
+
+  if (opcoes.diarizacao) {
+    instrucoes.push("Label distinct speakers as [spk_1], [spk_2], etc.");
+  }
+  if (opcoes.idiomas.length > 0) {
+    instrucoes.push(`Expected language(s): ${opcoes.idiomas.join(", ")}.`);
+  }
+  if (opcoes.vocabulario.length > 0) {
+    instrucoes.push(`Custom vocabulary hints: ${opcoes.vocabulario.slice(0, 100).join(", ")}.`);
+  }
+  instrucoes.push(
+    "If there is no intelligible speech or only silence, return an empty string. Return ONLY the transcript text with no extra commentary."
+  );
+
+  return instrucoes.join(" ");
+}
+
 /**
- * Faz upload do áudio (se necessário) e transcreve usando `gemini-3.5-transcribe`.
+ * Faz upload do áudio (se necessário) e transcreve usando `gemini-3.5-transcribe`
+ * (com fallback resiliente via Interactions API caso o modelo dedicado ainda não esteja liberado na chave).
  */
 export async function transcreverAudioGemini(
   opcoes: OpcoesTranscricaoGemini
 ): Promise<ResultadoTranscricaoGemini> {
   const ai = criarClienteGemini();
   const modo: ModoTranscricaoGemini = opcoes.modo ?? "verbatim";
+  const permitirFallback = opcoes.permitirFallbackMultimodal ?? true;
 
   // Regra oficial da API Gemini 3.5 Transcribe:
   // 1) Modo `smart` não pode ser combinado com `timestamp_granularities` ou `diarization_mode`.
@@ -322,44 +356,125 @@ export async function transcreverAudioGemini(
           }
         : ("verbatim" as const);
 
-    const interaction = await ai.interactions.create(
-      {
-        model: MODELO_TRANSCRICAO_PADRAO,
-        store: false,
-        input: [
+    const tentarModeloNativo = Date.now() >= transcribeNativoIndisponivelAte;
+
+    if (tentarModeloNativo) {
+      try {
+        const interaction = await ai.interactions.create(
           {
-            type: "audio",
-            uri: arquivo.uri,
-            mime_type: arquivo.mimeType,
+            model: MODELO_TRANSCRICAO_PADRAO,
+            store: false,
+            input: [
+              {
+                type: "audio",
+                uri: arquivo.uri,
+                mime_type: arquivo.mimeType,
+              },
+            ],
+            generation_config: {
+              transcription_config: {
+                language_codes: opcoes.idiomas ?? [],
+                mode: modeConfig,
+                ...(usarVocabulario ? { custom_vocabulary: vocabularioLimpo } : {}),
+              },
+            },
           },
-        ],
-        generation_config: {
-          transcription_config: {
-            language_codes: opcoes.idiomas ?? [],
-            mode: modeConfig,
-            ...(usarVocabulario ? { custom_vocabulary: vocabularioLimpo } : {}),
-          },
-        },
-      },
-      {
-        timeout: timeoutMs,
+          {
+            timeout: timeoutMs,
+          }
+        );
+
+        const texto = (interaction.output_text ?? "").trim();
+        const palavras = extrairPalavrasComTimestamps(interaction);
+        const metricasFluencia = calcularMetricasFluencia(texto, palavras);
+
+        return {
+          texto,
+          modo,
+          modelo: MODELO_TRANSCRICAO_PADRAO,
+          palavras,
+          metricasFluencia,
+        };
+      } catch (errNativo: unknown) {
+        const msg = errNativo instanceof Error ? errNativo.message : String(errNativo);
+        const naoEncontradoOuIndisponivel =
+          msg.includes("404") ||
+          msg.includes("not found") ||
+          msg.includes("not supported") ||
+          msg.includes("429") ||
+          msg.includes("503");
+
+        if (msg.includes("404") || msg.includes("not found")) {
+          // Evita repetir tentativa 404 por 5 minutos na mesma instância serverless
+          transcribeNativoIndisponivelAte = Date.now() + 5 * 60 * 1000;
+        }
+
+        if (!permitirFallback || !naoEncontradoOuIndisponivel) {
+          throw errNativo;
+        }
+
+        console.warn(
+          `[transcrever] ${MODELO_TRANSCRICAO_PADRAO} indisponível (${msg}); acionando fallback de transcrição via Interactions API.`
+        );
       }
-    );
+    }
 
-    const texto = (interaction.output_text ?? "").trim();
-    const palavras = extrairPalavrasComTimestamps(interaction);
-    const metricasFluencia = calcularMetricasFluencia(texto, palavras);
-
-    return {
-      texto,
+    // Fallback de alta velocidade usando o arquivo já enviado na Files API + Gemini Interactions API
+    const promptTranscricao = construirPromptFallbackTranscricao({
       modo,
-      modelo: MODELO_TRANSCRICAO_PADRAO,
-      palavras,
-      metricasFluencia,
-    };
+      diarizacao: usarDiarizacao,
+      vocabulario: vocabularioLimpo,
+      idiomas: opcoes.idiomas ?? [],
+    });
+
+    const modelosFallback = ["gemini-3.5-flash-lite", "gemini-3.8-flash"];
+    let ultimoErroFallback: unknown = null;
+
+    for (const modeloFallback of modelosFallback) {
+      try {
+        const interactionFallback = await ai.interactions.create(
+          {
+            model: modeloFallback,
+            store: false,
+            input: [
+              { type: "text", text: promptTranscricao },
+              {
+                type: "audio",
+                uri: arquivo.uri,
+                mime_type: arquivo.mimeType,
+              },
+            ],
+            generation_config: {
+              temperature: 0.0,
+            },
+          },
+          {
+            timeout: timeoutMs,
+          }
+        );
+
+        const texto = (interactionFallback.output_text ?? "").trim();
+        const metricasFluencia = calcularMetricasFluencia(texto, []);
+
+        return {
+          texto,
+          modo,
+          modelo: `${MODELO_TRANSCRICAO_PADRAO} (${modeloFallback})`,
+          palavras: [],
+          metricasFluencia,
+        };
+      } catch (errFb) {
+        ultimoErroFallback = errFb;
+      }
+    }
+
+    throw ultimoErroFallback ?? new Error("Falha ao transcrever áudio na Interactions API.");
   } finally {
     if (arquivoProprio?.name) {
-      void removerArquivoGemini(arquivoProprio.name, ai);
+      await Promise.race([
+        removerArquivoGemini(arquivoProprio.name, ai),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
     }
   }
 }
