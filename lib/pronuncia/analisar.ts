@@ -581,8 +581,13 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
             PROMPT_AVALIACAO_PROFUNDA +
             "\n\nCRÍTICO: Retorne ESTRITAMENTE um JSON válido com todos os campos solicitados. Não inclua blocos markdown (```json).",
           input: [
-            { type: "text", text: inputAudicao },
-            blocoAudioInput,
+            {
+              type: "user_input",
+              content: [
+                { type: "text", text: inputAudicao },
+                blocoAudioInput,
+              ],
+            },
           ],
           generation_config: {
             temperature: 0.0,

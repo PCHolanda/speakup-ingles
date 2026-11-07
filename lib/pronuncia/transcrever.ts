@@ -103,7 +103,7 @@ export function criarClienteGemini(): GoogleGenAI {
   if (!apiKey) {
     throw new Error("GOOGLE_GENERATIVE_AI_API_KEY não configurada");
   }
-  return new GoogleGenAI({ apiKey });
+  return new GoogleGenAI({ apiKey, apiVersion: "v1beta" });
 }
 
 function normalizarMimeTypeAudio(mimeType?: string): string {
@@ -366,9 +366,14 @@ export async function transcreverAudioGemini(
             store: false,
             input: [
               {
-                type: "audio",
-                uri: arquivo.uri,
-                mime_type: arquivo.mimeType,
+                type: "user_input",
+                content: [
+                  {
+                    type: "audio",
+                    uri: arquivo.uri,
+                    mime_type: arquivo.mimeType,
+                  },
+                ],
               },
             ],
             generation_config: {
@@ -437,11 +442,16 @@ export async function transcreverAudioGemini(
             model: modeloFallback,
             store: false,
             input: [
-              { type: "text", text: promptTranscricao },
               {
-                type: "audio",
-                uri: arquivo.uri,
-                mime_type: arquivo.mimeType,
+                type: "user_input",
+                content: [
+                  { type: "text", text: promptTranscricao },
+                  {
+                    type: "audio",
+                    uri: arquivo.uri,
+                    mime_type: arquivo.mimeType,
+                  },
+                ],
               },
             ],
             generation_config: {
