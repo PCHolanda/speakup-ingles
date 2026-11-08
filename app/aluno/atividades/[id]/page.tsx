@@ -920,7 +920,7 @@ export default function AlunoAtividadePlayerPage({
                         {criterioAtivo === "pronuncia" && (
                           <div className="space-y-3">
                             <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-                              <span className="text-xs font-bold text-slate-300">O que foi observado:</span>
+                              <span className="text-xs font-bold text-slate-300">O que é analisado</span>
                               <span className="text-[11px] font-bold text-violet-400">
                                 Sons específicos (th, r, v, ed), clareza e entonação
                               </span>
@@ -994,7 +994,7 @@ export default function AlunoAtividadePlayerPage({
                         {criterioAtivo === "vocabulario" && (
                           <div className="space-y-3">
                             <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-                              <span className="text-xs font-bold text-slate-300">O que foi observado:</span>
+                              <span className="text-xs font-bold text-slate-300">O que é analisado</span>
                               <span className="text-[11px] font-bold text-blue-400">
                                 Palavras esperadas, variedade e adequação ao tema
                               </span>
@@ -1068,7 +1068,7 @@ export default function AlunoAtividadePlayerPage({
                         {criterioAtivo === "fluencia" && (
                           <div className="space-y-3">
                             <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-                              <span className="text-xs font-bold text-slate-300">O que foi observado:</span>
+                              <span className="text-xs font-bold text-slate-300">O que é analisado</span>
                               <span className="text-[11px] font-bold text-amber-400">
                                 Pausas excessivas, hesitações e ritmo de fala
                               </span>
@@ -1131,7 +1131,7 @@ export default function AlunoAtividadePlayerPage({
                         {criterioAtivo === "estrutura" && (
                           <div className="space-y-3">
                             <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-                              <span className="text-xs font-bold text-slate-300">O que foi observado:</span>
+                              <span className="text-xs font-bold text-slate-300">O que é analisado</span>
                               <span className="text-[11px] font-bold text-emerald-400">
                                 Frases completas e ordem das palavras
                               </span>
