@@ -321,9 +321,14 @@ export interface AnalisePronuncia {
 
 export const MODELOS_RECOMENDADOS = [
   {
-    id: "gemini-3.8-flash",
-    nome: "Gemini 3.8 Flash",
-    descricao: "Recomendado oficial (Mais inteligente, multimodal moderno e rápido)",
+    id: "gemini-3.5-transcribe",
+    nome: "Gemini 3.5 Transcribe + 3.5 Flash-Lite",
+    descricao: "Recomendado: Motor Speech-to-Text dedicado + avaliador pedagógico ultra-rápido",
+  },
+  {
+    id: "gemini-3.5-flash-lite",
+    nome: "Gemini 3.5 Flash-Lite",
+    descricao: "Ultra rápido (< 1s), menor latência e alta franquia de requisições",
   },
   {
     id: "gemini-3.6-flash",
@@ -331,19 +336,14 @@ export const MODELOS_RECOMENDADOS = [
     descricao: "Modelo de produção estável com alta capacidade",
   },
   {
-    id: "gemini-3.5-flash-lite",
-    nome: "Gemini 3.5 Flash-Lite",
-    descricao: "Ultra rápido, menor latência e ideal para contornar picos de demanda",
+    id: "gemini-3.8-flash",
+    nome: "Gemini 3.8 Flash",
+    descricao: "Mais avançado da família Flash (sujeito a limite de 20 req/dia no plano gratuito)",
   },
   {
     id: "gemini-3.1-flash-lite",
     nome: "Gemini 3.1 Flash-Lite",
     descricao: "Econômico e ágil para alta frequência de avaliações",
-  },
-  {
-    id: "gemini-3.5-transcribe",
-    nome: "Gemini 3.5 Transcribe + 3.8 Flash",
-    descricao: "Motor dedicado Speech-to-Text combinado com avaliador pedagógico",
   },
 ];
 
@@ -356,21 +356,22 @@ function normalizarModeloAvaliador(modeloBruto?: string | null): string | null {
     limpo.startsWith("gemini-2.0") ||
     limpo.startsWith("gemini-2.5")
   ) {
-    return "gemini-3.8-flash";
+    return "gemini-3.5-flash-lite";
   }
   // `gemini-3.5-transcribe` já roda sempre na Etapa 1 (Speech-to-Text);
-  // a Etapa 2 (rubrica JSON pedagógica) usa `gemini-3.8-flash`.
+  // a Etapa 2 (rubrica JSON pedagógica) usa `gemini-3.5-flash-lite` por padrão para máxima velocidade e cota.
   if (limpo === MODELO_TRANSCRICAO_PADRAO || limpo.startsWith("gemini-3.5-transcribe")) {
-    return "gemini-3.8-flash";
+    return "gemini-3.5-flash-lite";
   }
   return limpo;
 }
 
-let modeloAtivoCache: string = "gemini-3.8-flash";
+let modeloAtivoCache: string = "gemini-3.5-flash-lite";
 let ultimoFetchConfig = 0;
+const modelosEmCooldownAte = new Map<string, number>();
 
 export function atualizarModeloAtivoCache(modelo: string) {
-  modeloAtivoCache = normalizarModeloAvaliador(modelo) || "gemini-3.8-flash";
+  modeloAtivoCache = normalizarModeloAvaliador(modelo) || "gemini-3.5-flash-lite";
   ultimoFetchConfig = Date.now();
 }
 
@@ -410,15 +411,18 @@ export async function obterModeloConfigurado(): Promise<string> {
 
 export async function obterModelosCandidatos(): Promise<string[]> {
   const modeloConfigurado = await obterModeloConfigurado();
-  return Array.from(
+  const todos = Array.from(
     new Set([
       modeloConfigurado,
-      "gemini-3.8-flash",
-      "gemini-3.6-flash",
       "gemini-3.5-flash-lite",
+      "gemini-3.6-flash",
       "gemini-3.1-flash-lite",
+      "gemini-3.8-flash",
     ])
   );
+  const agora = Date.now();
+  const disponiveis = todos.filter((m) => (modelosEmCooldownAte.get(m) ?? 0) <= agora);
+  return disponiveis.length > 0 ? disponiveis : todos;
 }
 
 async function executarComFallback(
@@ -428,44 +432,45 @@ async function executarComFallback(
   let ultimoErro: unknown = null;
 
   for (const modelo of modelos) {
-    for (let tentativa = 1; tentativa <= 2; tentativa++) {
-      try {
-        const res = await chamadaFn(modelo);
-        modeloAtivoCache = modelo;
-        return { text: res.text, modeloUsado: modelo };
-      } catch (err: unknown) {
-        ultimoErro = err;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[pronuncia] Falha com modelo ${modelo} (tentativa ${tentativa}):`, msg);
+    try {
+      const res = await chamadaFn(modelo);
+      modeloAtivoCache = modelo;
+      return { text: res.text, modeloUsado: modelo };
+    } catch (err: unknown) {
+      ultimoErro = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[pronuncia] Falha com modelo ${modelo}:`, msg);
 
-        const isHighDemandOrLimit =
-          msg.includes("high demand") ||
-          msg.includes("Spikes in demand") ||
-          msg.includes("429") ||
-          msg.includes("503") ||
-          msg.includes("overloaded") ||
-          msg.includes("quota") ||
-          msg.includes("RESOURCE_EXHAUSTED");
+      const isQuotaOrRateLimit =
+        msg.includes("429") ||
+        msg.includes("Rate limit") ||
+        msg.includes("quota") ||
+        msg.includes("RESOURCE_EXHAUSTED");
 
-        const isDeprecatedOrTimeout =
-          msg.includes("not found") ||
-          msg.includes("not supported") ||
-          msg.includes("no longer available") ||
-          msg.includes("AbortError") ||
-          msg.includes("timeout") ||
-          msg.includes("timed out");
-
-        if (isHighDemandOrLimit && tentativa === 1) {
-          await new Promise((r) => setTimeout(r, 600));
-          continue;
-        }
-
-        if (isHighDemandOrLimit || isDeprecatedOrTimeout) {
-          break;
-        }
-
-        throw err;
+      if (isQuotaOrRateLimit) {
+        // Coloca o modelo em cooldown por 10 minutos para não atrasar próximas análises
+        modelosEmCooldownAte.set(modelo, Date.now() + 10 * 60 * 1000);
+        continue;
       }
+
+      const isRetryableOnNextModel =
+        msg.includes("high demand") ||
+        msg.includes("Spikes in demand") ||
+        msg.includes("503") ||
+        msg.includes("overloaded") ||
+        msg.includes("not found") ||
+        msg.includes("not supported") ||
+        msg.includes("no longer available") ||
+        msg.includes("AbortError") ||
+        msg.includes("timeout") ||
+        msg.includes("timed out") ||
+        msg.includes("Timeout");
+
+      if (isRetryableOnNextModel) {
+        continue;
+      }
+
+      throw err;
     }
   }
 
@@ -525,7 +530,8 @@ export async function analisarPronuncia(
         modo: "verbatim",
         marcarTempoPalavras: true,
         idiomas: [],
-        timeoutMs: 9000,
+        timeoutMs: 6500,
+        permitirFallbackMultimodal: false,
       });
 
       console.log("[pronuncia] Transcrição gemini-3.5-transcribe concluída:", {
@@ -573,30 +579,42 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
 
     // Etapa 2: Avaliação pedagógica profunda dos 4 critérios via Gemini Interactions API
     const resultado = await executarComFallback(async (nomeModelo) => {
-      const interaction = await ai.interactions.create(
-        {
-          model: nomeModelo,
-          store: false,
-          system_instruction:
-            PROMPT_AVALIACAO_PROFUNDA +
-            "\n\nCRÍTICO: Retorne ESTRITAMENTE um JSON válido com todos os campos solicitados. Não inclua blocos markdown (```json).",
-          input: [
-            {
-              type: "user_input",
-              content: [
-                { type: "text", text: inputAudicao },
-                blocoAudioInput,
-              ],
+      const timeoutAvaliacaoMs = 9500;
+      const interaction = await Promise.race([
+        ai.interactions.create(
+          {
+            model: nomeModelo,
+            store: false,
+            system_instruction:
+              PROMPT_AVALIACAO_PROFUNDA +
+              "\n\nCRÍTICO: Retorne ESTRITAMENTE um JSON válido com todos os campos solicitados. Não inclua blocos markdown (```json).",
+            input: [
+              {
+                type: "user_input",
+                content: [
+                  { type: "text", text: inputAudicao },
+                  blocoAudioInput,
+                ],
+              },
+            ],
+            generation_config: {
+              temperature: 0.0,
+              thinking_level: "minimal",
             },
-          ],
-          generation_config: {
-            temperature: 0.0,
           },
-        },
-        {
-          timeout: 15000,
-        }
-      );
+          {
+            timeout_ms: timeoutAvaliacaoMs,
+            retries: { strategy: "none" },
+            retry_codes: [],
+          }
+        ),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Timeout de ${timeoutAvaliacaoMs}ms excedido em ${nomeModelo}`)),
+            timeoutAvaliacaoMs
+          )
+        ),
+      ]);
 
       const textoSaida = (interaction.output_text ?? "").trim();
       if (!textoSaida) {

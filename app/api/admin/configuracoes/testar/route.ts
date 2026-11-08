@@ -62,10 +62,13 @@ export async function POST(request: NextRequest) {
         input: "Reply with the exact word 'OK'.",
         generation_config: {
           temperature: 0.0,
+          thinking_level: "minimal",
         },
       },
       {
-        timeout: 8000,
+        timeout_ms: 8000,
+        retries: { strategy: "none" },
+        retry_codes: [],
       }
     );
 

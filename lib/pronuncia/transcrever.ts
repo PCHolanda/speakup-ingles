@@ -360,34 +360,41 @@ export async function transcreverAudioGemini(
 
     if (tentarModeloNativo) {
       try {
-        const interaction = await ai.interactions.create(
-          {
-            model: MODELO_TRANSCRICAO_PADRAO,
-            store: false,
-            input: [
-              {
-                type: "user_input",
-                content: [
-                  {
-                    type: "audio",
-                    uri: arquivo.uri,
-                    mime_type: arquivo.mimeType,
-                  },
-                ],
-              },
-            ],
-            generation_config: {
-              transcription_config: {
-                language_codes: opcoes.idiomas ?? [],
-                mode: modeConfig,
-                ...(usarVocabulario ? { custom_vocabulary: vocabularioLimpo } : {}),
+        const interaction = await Promise.race([
+          ai.interactions.create(
+            {
+              model: MODELO_TRANSCRICAO_PADRAO,
+              store: false,
+              input: [
+                {
+                  type: "user_input",
+                  content: [
+                    {
+                      type: "audio",
+                      uri: arquivo.uri,
+                      mime_type: arquivo.mimeType,
+                    },
+                  ],
+                },
+              ],
+              generation_config: {
+                transcription_config: {
+                  language_codes: opcoes.idiomas ?? [],
+                  mode: modeConfig,
+                  ...(usarVocabulario ? { custom_vocabulary: vocabularioLimpo } : {}),
+                },
               },
             },
-          },
-          {
-            timeout: timeoutMs,
-          }
-        );
+            {
+              timeout_ms: timeoutMs,
+              retries: { strategy: "none" },
+              retry_codes: [],
+            }
+          ),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Timeout no gemini-3.5-transcribe")), timeoutMs)
+          ),
+        ]);
 
         const texto = (interaction.output_text ?? "").trim();
         const palavras = extrairPalavrasComTimestamps(interaction);
@@ -437,31 +444,39 @@ export async function transcreverAudioGemini(
 
     for (const modeloFallback of modelosFallback) {
       try {
-        const interactionFallback = await ai.interactions.create(
-          {
-            model: modeloFallback,
-            store: false,
-            input: [
-              {
-                type: "user_input",
-                content: [
-                  { type: "text", text: promptTranscricao },
-                  {
-                    type: "audio",
-                    uri: arquivo.uri,
-                    mime_type: arquivo.mimeType,
-                  },
-                ],
+        const interactionFallback = await Promise.race([
+          ai.interactions.create(
+            {
+              model: modeloFallback,
+              store: false,
+              input: [
+                {
+                  type: "user_input",
+                  content: [
+                    { type: "text", text: promptTranscricao },
+                    {
+                      type: "audio",
+                      uri: arquivo.uri,
+                      mime_type: arquivo.mimeType,
+                    },
+                  ],
+                },
+              ],
+              generation_config: {
+                temperature: 0.0,
+                thinking_level: "minimal",
               },
-            ],
-            generation_config: {
-              temperature: 0.0,
             },
-          },
-          {
-            timeout: timeoutMs,
-          }
-        );
+            {
+              timeout_ms: timeoutMs,
+              retries: { strategy: "none" },
+              retry_codes: [],
+            }
+          ),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout no fallback ${modeloFallback}`)), timeoutMs)
+          ),
+        ]);
 
         const texto = (interactionFallback.output_text ?? "").trim();
         const metricasFluencia = calcularMetricasFluencia(texto, []);
