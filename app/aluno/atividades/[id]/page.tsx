@@ -165,7 +165,7 @@ export default function AlunoAtividadePlayerPage({
   const [analisando, setAnalisando] = useState(false);
   const [avisoAnalise, setAvisoAnalise] = useState(false);
   const [criterioAtivo, setCriterioAtivo] = useState<"pronuncia" | "vocabulario" | "fluencia" | "estrutura">("pronuncia");
-  const [expandirCriterios, setExpandirCriterios] = useState(true);
+  const [expandirCriterios, setExpandirCriterios] = useState(false);
 
   const gravadorRef = useRef<GravadorWav | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -351,6 +351,7 @@ export default function AlunoAtividadePlayerPage({
     setIndiceAtual(novoIndice);
     setMostrarDica(false);
     setAvisoAnalise(false);
+    setExpandirCriterios(false);
   };
 
   // Avançar Pergunta
@@ -881,7 +882,7 @@ export default function AlunoAtividadePlayerPage({
               {/* Análise Aprofundada dos 4 Critérios */}
               {analiseAtual.detalhes_criterios && (
                 <div className="mb-4 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg shadow-blue-950/20">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className={`flex items-center justify-between ${expandirCriterios ? "mb-3" : ""}`}>
                     <div className="flex items-center gap-2">
                       <div className="w-7 h-7 rounded-lg bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
                         <Sparkles className="w-4 h-4" />
