@@ -112,6 +112,17 @@ interface Pergunta {
   enunciado: string;
   instrucao_pt: string | null;
   dicas: string[] | null;
+  imagem_path?: string | null;
+}
+
+function resolverUrlImagem(imagemPath?: string | null): string | null {
+  if (!imagemPath) return null;
+  const limpo = imagemPath.trim();
+  if (!limpo) return null;
+  if (limpo.startsWith("http://") || limpo.startsWith("https://") || limpo.startsWith("/")) {
+    return limpo;
+  }
+  return `/seed/${limpo}`;
 }
 
 interface Atividade {
@@ -499,6 +510,47 @@ export default function AlunoAtividadePlayerPage({
             <p className="text-sm font-medium text-slate-400 mb-6">
               💡 {perguntaAtual.instrucao_pt}
             </p>
+          )}
+
+          {/* Imagem da Questão (quando houver imagem_path) */}
+          {perguntaAtual.imagem_path && (
+            <div className="mb-6 rounded-2xl overflow-hidden border border-slate-800 bg-slate-950/90 p-3 shadow-inner">
+              {perguntaAtual.tipo === "comparacao" && (
+                <div className="grid grid-cols-2 gap-2 mb-2 text-center">
+                  <span className="text-[11px] font-bold uppercase tracking-wider bg-sky-500/15 text-sky-300 border border-sky-500/30 py-1 px-2.5 rounded-lg">
+                    ⬅️ On the left (Esquerda)
+                  </span>
+                  <span className="text-[11px] font-bold uppercase tracking-wider bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 py-1 px-2.5 rounded-lg">
+                    On the right (Direita) ➡️
+                  </span>
+                </div>
+              )}
+              <div className="relative w-full flex items-center justify-center bg-slate-900/60 rounded-xl overflow-hidden">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  key={perguntaAtual.id}
+                  src={resolverUrlImagem(perguntaAtual.imagem_path) ?? undefined}
+                  alt={perguntaAtual.enunciado}
+                  className={`w-full h-auto object-contain rounded-xl ${
+                    perguntaAtual.tipo === "comparacao" ? "max-h-80 sm:max-h-96" : "max-h-64 sm:max-h-72"
+                  }`}
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+                    const rawPath = perguntaAtual.imagem_path?.trim();
+                    if (
+                      supabaseUrl &&
+                      rawPath &&
+                      !rawPath.startsWith("http") &&
+                      !target.dataset.fallbackApplied
+                    ) {
+                      target.dataset.fallbackApplied = "1";
+                      target.src = `${supabaseUrl}/storage/v1/object/public/atividades/${rawPath}`;
+                    }
+                  }}
+                />
+              </div>
+            </div>
           )}
 
           {/* Dica Pedagógica Expansível */}
