@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { salvarConfigIaCliente, MODELO_PADRAO_CLIENTE } from "@/lib/pronuncia/config-cliente";
 
 const clienteSchema = z.object({
   nome: z.string().min(2, "O nome do cliente deve ter pelo menos 2 caracteres"),
   documento: z.string().optional().nullable(),
   email_contato: z.string().email("E-mail de contato inválido").optional().or(z.literal("")),
   telefone_contato: z.string().optional().nullable(),
+  gemini_api_key: z.string().optional().nullable(),
+  gemini_model: z.string().optional().nullable(),
 });
 
 export async function GET() {
@@ -55,7 +58,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { nome, documento, email_contato, telefone_contato } = result.data;
+    const { nome, documento, email_contato, telefone_contato, gemini_api_key, gemini_model } =
+      result.data;
     const admin = createAdminClient();
 
     const { data: novoCliente, error } = await admin
@@ -81,6 +85,19 @@ export async function POST(request: NextRequest) {
         );
       }
       throw error;
+    }
+
+    // Salva a chave de API e o modelo de IA exclusivos deste novo cliente
+    if (novoCliente?.id) {
+      try {
+        await salvarConfigIaCliente({
+          clienteId: novoCliente.id,
+          apiKey: gemini_api_key?.trim() || null,
+          modelo: gemini_model?.trim() || MODELO_PADRAO_CLIENTE,
+        });
+      } catch (cfgErr) {
+        console.warn("[clientes] Aviso ao salvar config inicial de IA do cliente:", cfgErr);
+      }
     }
 
     return NextResponse.json({

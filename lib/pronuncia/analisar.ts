@@ -409,11 +409,21 @@ export async function obterModeloConfigurado(): Promise<string> {
   return modeloAtivoCache;
 }
 
-export async function obterModelosCandidatos(): Promise<string[]> {
-  const modeloConfigurado = await obterModeloConfigurado();
+export interface OpcoesClienteAnalise {
+  clienteId?: string | null;
+  apiKey?: string | null;
+  modelo?: string | null;
+}
+
+export async function obterModelosCandidatos(
+  modeloPreferido?: string | null,
+  clienteId?: string | null
+): Promise<string[]> {
+  const modeloBase =
+    normalizarModeloAvaliador(modeloPreferido) || (await obterModeloConfigurado());
   const todos = Array.from(
     new Set([
-      modeloConfigurado,
+      modeloBase,
       "gemini-3.5-flash-lite",
       "gemini-3.6-flash",
       "gemini-3.1-flash-lite",
@@ -421,25 +431,35 @@ export async function obterModelosCandidatos(): Promise<string[]> {
     ])
   );
   const agora = Date.now();
-  const disponiveis = todos.filter((m) => (modelosEmCooldownAte.get(m) ?? 0) <= agora);
+  const escopo = clienteId?.trim() || "global";
+  const disponiveis = todos.filter(
+    (m) => (modelosEmCooldownAte.get(`${escopo}:${m}`) ?? 0) <= agora
+  );
   return disponiveis.length > 0 ? disponiveis : todos;
 }
 
 async function executarComFallback(
-  chamadaFn: (nomeModelo: string) => Promise<{ text: string }>
+  chamadaFn: (nomeModelo: string) => Promise<{ text: string }>,
+  opcoes?: { modeloPreferido?: string | null; clienteId?: string | null }
 ): Promise<{ text: string; modeloUsado: string }> {
-  const modelos = await obterModelosCandidatos();
+  const modelos = await obterModelosCandidatos(
+    opcoes?.modeloPreferido,
+    opcoes?.clienteId
+  );
+  const escopo = opcoes?.clienteId?.trim() || "global";
   let ultimoErro: unknown = null;
 
   for (const modelo of modelos) {
     try {
       const res = await chamadaFn(modelo);
-      modeloAtivoCache = modelo;
+      if (!opcoes?.clienteId) {
+        modeloAtivoCache = modelo;
+      }
       return { text: res.text, modeloUsado: modelo };
     } catch (err: unknown) {
       ultimoErro = err;
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[pronuncia] Falha com modelo ${modelo}:`, msg);
+      console.warn(`[pronuncia] Falha com modelo ${modelo} (cliente=${escopo}):`, msg);
 
       const isQuotaOrRateLimit =
         msg.includes("429") ||
@@ -448,8 +468,8 @@ async function executarComFallback(
         msg.includes("RESOURCE_EXHAUSTED");
 
       if (isQuotaOrRateLimit) {
-        // Coloca o modelo em cooldown por 10 minutos para não atrasar próximas análises
-        modelosEmCooldownAte.set(modelo, Date.now() + 10 * 60 * 1000);
+        // Coloca o modelo em cooldown por 10 minutos para este cliente
+        modelosEmCooldownAte.set(`${escopo}:${modelo}`, Date.now() + 10 * 60 * 1000);
         continue;
       }
 
@@ -479,13 +499,18 @@ async function executarComFallback(
 
 export async function analisarPronuncia(
   audioWav: Uint8Array,
-  pergunta: ContextoPergunta
+  pergunta: ContextoPergunta,
+  opcoesCliente?: OpcoesClienteAnalise
 ): Promise<AnalisePronuncia> {
-  if (!obterChaveGemini()) {
-    throw new ConfigIAAusenteError("GOOGLE_GENERATIVE_AI_API_KEY não configurada");
+  const chaveEfetiva =
+    opcoesCliente?.apiKey?.replace(/^["']|["']$/g, "").trim() || obterChaveGemini();
+  if (!chaveEfetiva) {
+    throw new ConfigIAAusenteError(
+      "Chave de API do Google Gemini não configurada para este cliente."
+    );
   }
 
-  const ai = criarClienteGemini();
+  const ai = criarClienteGemini(chaveEfetiva);
 
   const tipoMapeado =
     pergunta.tipo === "imagem"
@@ -532,6 +557,7 @@ export async function analisarPronuncia(
         idiomas: [],
         timeoutMs: 6500,
         permitirFallbackMultimodal: false,
+        aiClient: ai,
       });
 
       console.log("[pronuncia] Transcrição gemini-3.5-transcribe concluída:", {
@@ -578,50 +604,56 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
         };
 
     // Etapa 2: Avaliação pedagógica profunda dos 4 critérios via Gemini Interactions API
-    const resultado = await executarComFallback(async (nomeModelo) => {
-      const timeoutAvaliacaoMs = 9500;
-      const interaction = await Promise.race([
-        ai.interactions.create(
-          {
-            model: nomeModelo,
-            store: false,
-            system_instruction:
-              PROMPT_AVALIACAO_PROFUNDA +
-              "\n\nCRÍTICO: Retorne ESTRITAMENTE um JSON válido com todos os campos solicitados. Não inclua blocos markdown (```json).",
-            input: [
-              {
-                type: "user_input",
-                content: [
-                  { type: "text", text: inputAudicao },
-                  blocoAudioInput,
-                ],
+    const resultado = await executarComFallback(
+      async (nomeModelo) => {
+        const timeoutAvaliacaoMs = 9500;
+        const interaction = await Promise.race([
+          ai.interactions.create(
+            {
+              model: nomeModelo,
+              store: false,
+              system_instruction:
+                PROMPT_AVALIACAO_PROFUNDA +
+                "\n\nCRÍTICO: Retorne ESTRITAMENTE um JSON válido com todos os campos solicitados. Não inclua blocos markdown (```json).",
+              input: [
+                {
+                  type: "user_input",
+                  content: [
+                    { type: "text", text: inputAudicao },
+                    blocoAudioInput,
+                  ],
+                },
+              ],
+              generation_config: {
+                temperature: 0.0,
+                thinking_level: "minimal",
               },
-            ],
-            generation_config: {
-              temperature: 0.0,
-              thinking_level: "minimal",
             },
-          },
-          {
-            timeout_ms: timeoutAvaliacaoMs,
-            retries: { strategy: "none" },
-            retry_codes: [],
-          }
-        ),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`Timeout de ${timeoutAvaliacaoMs}ms excedido em ${nomeModelo}`)),
-            timeoutAvaliacaoMs
-          )
-        ),
-      ]);
+            {
+              timeout_ms: timeoutAvaliacaoMs,
+              retries: { strategy: "none" },
+              retry_codes: [],
+            }
+          ),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`Timeout de ${timeoutAvaliacaoMs}ms excedido em ${nomeModelo}`)),
+              timeoutAvaliacaoMs
+            )
+          ),
+        ]);
 
-      const textoSaida = (interaction.output_text ?? "").trim();
-      if (!textoSaida) {
-        throw new Error(`Modelo ${nomeModelo} retornou resposta vazia.`);
+        const textoSaida = (interaction.output_text ?? "").trim();
+        if (!textoSaida) {
+          throw new Error(`Modelo ${nomeModelo} retornou resposta vazia.`);
+        }
+        return { text: textoSaida };
+      },
+      {
+        modeloPreferido: opcoesCliente?.modelo,
+        clienteId: opcoesCliente?.clienteId,
       }
-      return { text: textoSaida };
-    });
+    );
 
     const modeloNome = transcricaoGemini
       ? `${MODELO_TRANSCRICAO_PADRAO} + ${resultado.modeloUsado}`

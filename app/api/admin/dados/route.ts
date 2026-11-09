@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  mascararApiKey,
+  MODELO_PADRAO_CLIENTE,
+  obterMapaConfigTodosClientes,
+} from "@/lib/pronuncia/config-cliente";
 
 export async function GET() {
   try {
@@ -227,11 +232,17 @@ export async function GET() {
       };
     });
 
+    const { modeloGlobal, apiKeyGlobal, porCliente: configPorCliente } =
+      await obterMapaConfigTodosClientes();
+
     const clientes = clientesRaw.map((c) => {
       const escolasDoCliente = escolas.filter((e) => e.cliente_id === c.id);
       const totalEscolas = escolasDoCliente.length;
       const totalTurmas = escolasDoCliente.reduce((acc, e) => acc + e.total_turmas, 0);
       const totalAlunos = escolasDoCliente.reduce((acc, e) => acc + e.total_alunos, 0);
+      const cfg = configPorCliente.get(c.id);
+      const apiKeyPropria = cfg?.apiKeyPropria;
+      const modeloCliente = cfg?.modelo || modeloGlobal || MODELO_PADRAO_CLIENTE;
 
       return {
         id: c.id,
@@ -243,6 +254,10 @@ export async function GET() {
         total_escolas: totalEscolas,
         total_turmas: totalTurmas,
         total_alunos: totalAlunos,
+        gemini_model: modeloCliente,
+        tem_chave_propria: Boolean(apiKeyPropria),
+        tem_api_key: Boolean(apiKeyPropria || apiKeyGlobal),
+        api_key_mascarada: mascararApiKey(apiKeyPropria),
         created_at: c.created_at,
       };
     });

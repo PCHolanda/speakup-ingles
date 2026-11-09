@@ -1,42 +1,58 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { atualizarModeloAtivoCache, MODELOS_RECOMENDADOS } from "@/lib/pronuncia/analisar";
-import { MODELO_TRANSCRICAO_PADRAO, obterChaveGemini } from "@/lib/pronuncia/transcrever";
+import { MODELO_TRANSCRICAO_PADRAO } from "@/lib/pronuncia/transcrever";
+import {
+  mascararApiKey,
+  MODELO_PADRAO_CLIENTE,
+  obterConfigIaCliente,
+  obterMapaConfigTodosClientes,
+  salvarConfigIaCliente,
+} from "@/lib/pronuncia/config-cliente";
 
 const configSchema = z.object({
-  modelo: z.string().trim().min(3, "Nome do modelo inválido"),
+  cliente_id: z.string().trim().optional().nullable(),
+  modelo: z.string().trim().min(3, "Nome do modelo inválido").optional(),
+  api_key: z.string().optional().nullable(),
+  limpar_api_key: z.boolean().optional(),
 });
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const admin = createAdminClient();
-    let modeloAtual = process.env.GEMINI_MODEL?.trim().replace(/^models\//, "") || "gemini-3.8-flash";
-    let tabelaExiste = true;
+    const clienteIdParam = request.nextUrl.searchParams.get("cliente_id")?.trim() || null;
+    const { modeloGlobal, apiKeyGlobal, porCliente } = await obterMapaConfigTodosClientes();
+    const cfgSelecionado = await obterConfigIaCliente(clienteIdParam);
 
-    try {
-      const { data, error } = await admin
-        .from("configuracoes")
-        .select("valor, updated_at")
-        .eq("chave", "gemini_model")
-        .maybeSingle();
-
-      if (!error && data?.valor) {
-        modeloAtual = data.valor.trim();
-      } else if (error) {
-        console.warn("[configuracoes] Tabela configuracoes ainda não existe ou inacessível:", error.message);
-        tabelaExiste = false;
+    const configsClientes: Record<
+      string,
+      {
+        modelo: string;
+        tem_chave_propria: boolean;
+        tem_api_key: boolean;
+        api_key_mascarada: string | null;
       }
-    } catch {
-      tabelaExiste = false;
-    }
+    > = {};
+
+    porCliente.forEach((val, cid) => {
+      configsClientes[cid] = {
+        modelo: val.modelo || modeloGlobal || MODELO_PADRAO_CLIENTE,
+        tem_chave_propria: Boolean(val.apiKeyPropria),
+        tem_api_key: Boolean(val.apiKeyPropria || apiKeyGlobal),
+        api_key_mascarada: mascararApiKey(val.apiKeyPropria),
+      };
+    });
 
     return NextResponse.json({
-      modelo_atual: modeloAtual,
+      cliente_id: cfgSelecionado.clienteId,
+      modelo_atual: cfgSelecionado.modeloConfigurado,
       modelo_transcricao: MODELO_TRANSCRICAO_PADRAO,
       modelos_recomendados: MODELOS_RECOMENDADOS,
-      tem_api_key: !!obterChaveGemini(),
-      tabela_existe: tabelaExiste,
+      tem_api_key: cfgSelecionado.temApiKeyEfetiva,
+      tem_chave_propria: cfgSelecionado.temChavePropria,
+      api_key_mascarada: cfgSelecionado.apiKeyMascarada,
+      tem_api_key_global: Boolean(apiKeyGlobal),
+      configs_por_cliente: configsClientes,
+      tabela_existe: true,
     });
   } catch (error: unknown) {
     return NextResponse.json(
@@ -58,43 +74,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const cleanModel = result.data.modelo.replace(/^models\//, "").trim();
-    const admin = createAdminClient();
+    const { cliente_id, modelo, api_key, limpar_api_key } = result.data;
+    const cleanModel = modelo ? modelo.replace(/^models\//, "").trim() : undefined;
+    const cleanKey = api_key?.replace(/^["']|["']$/g, "").trim() || null;
 
-    // Tentar salvar na tabela configuracoes
-    const { error } = await admin.from("configuracoes").upsert({
-      chave: "gemini_model",
-      valor: cleanModel,
-      descricao: "Modelo do Google Gemini configurado pelo painel Admin",
-      updated_at: new Date().toISOString(),
+    const cfgSalva = await salvarConfigIaCliente({
+      clienteId: cliente_id || null,
+      modelo: cleanModel,
+      apiKey: cleanKey,
+      limparApiKey: Boolean(limpar_api_key),
     });
 
-    if (error) {
-      console.error("[configuracoes] Erro ao salvar no banco:", error);
-      // Se a tabela não existir, avisamos o admin
-      if (error.code === "42P01" || error.message.includes("does not exist")) {
-        return NextResponse.json(
-          {
-            error:
-              "A tabela 'configuracoes' ainda não existe no seu Supabase. Execute o script '004_configuracoes.sql' no SQL Editor do Supabase.",
-          },
-          { status: 400 }
-        );
-      }
-      throw error;
+    if (!cliente_id && cleanModel) {
+      atualizarModeloAtivoCache(cleanModel);
     }
-
-    // Atualiza cache em memória para efeito imediato
-    atualizarModeloAtivoCache(cleanModel);
 
     return NextResponse.json({
       sucesso: true,
-      modelo: cleanModel,
-      mensagem: `Modelo configurado com sucesso para "${cleanModel}"!`,
+      cliente_id: cfgSalva.clienteId,
+      modelo: cfgSalva.modeloConfigurado,
+      tem_chave_propria: cfgSalva.temChavePropria,
+      tem_api_key: cfgSalva.temApiKeyEfetiva,
+      api_key_mascarada: cfgSalva.apiKeyMascarada,
+      mensagem: cliente_id
+        ? `Configuração de IA do cliente salva com sucesso (modelo: "${cfgSalva.modeloConfigurado}")!`
+        : `Modelo padrão configurado com sucesso para "${cfgSalva.modeloConfigurado}"!`,
     });
   } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("does not exist") || msg.includes("42P01")) {
+      return NextResponse.json(
+        {
+          error:
+            "A tabela 'configuracoes' ainda não existe no seu Supabase. Execute o script '004_configuracoes.sql' no SQL Editor do Supabase.",
+        },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
-      { error: "Erro ao salvar modelo: " + (error instanceof Error ? error.message : String(error)) },
+      { error: "Erro ao salvar configuração: " + msg },
       { status: 500 }
     );
   }

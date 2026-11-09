@@ -44,6 +44,10 @@ interface Cliente {
   total_escolas: number;
   total_turmas: number;
   total_alunos: number;
+  gemini_model?: string;
+  tem_chave_propria?: boolean;
+  tem_api_key?: boolean;
+  api_key_mascarada?: string | null;
   created_at: string;
 }
 
@@ -119,8 +123,13 @@ export default function AdminDashboardPage() {
   const [filtroTurmaId, setFiltroTurmaId] = useState<string>("todas");
   const [busca, setBusca] = useState("");
 
-  // Configuração do Modelo de IA
-  const [modeloIa, setModeloIa] = useState("gemini-3.8-flash");
+  // Configuração do Modelo de IA e Chave por Cliente
+  const [iaClienteId, setIaClienteId] = useState<string>("");
+  const [modeloIa, setModeloIa] = useState("gemini-3.6-flash");
+  const [apiKeyIaInput, setApiKeyIaInput] = useState("");
+  const [mostrarApiKeyIa, setMostrarApiKeyIa] = useState(false);
+  const [apiKeyMascaradaCliente, setApiKeyMascaradaCliente] = useState<string | null>(null);
+  const [temChavePropriaCliente, setTemChavePropriaCliente] = useState(false);
   const [modelosRecomendados, setModelosRecomendados] = useState<
     Array<{ id: string; nome: string; descricao: string }>
   >([]);
@@ -143,6 +152,8 @@ export default function AdminDashboardPage() {
   const [clienteDocumento, setClienteDocumento] = useState("");
   const [clienteEmail, setClienteEmail] = useState("");
   const [clienteTelefone, setClienteTelefone] = useState("");
+  const [clienteApiKey, setClienteApiKey] = useState("");
+  const [clienteModeloIa, setClienteModeloIa] = useState("gemini-3.6-flash");
   const [salvandoCliente, setSalvandoCliente] = useState(false);
 
   // Formulário: Nova Escola
@@ -205,8 +216,19 @@ export default function AdminDashboardPage() {
       }
 
       // Pré-selecionar itens padrão nos selects
-      if (data.clientes?.length > 0 && !escolaClienteId) {
-        setEscolaClienteId(data.clientes[0].id);
+      if (data.clientes?.length > 0) {
+        if (!escolaClienteId) setEscolaClienteId(data.clientes[0].id);
+        const clienteSelecionado =
+          data.clientes.find((c: Cliente) => c.id === iaClienteId) || data.clientes[0];
+        if (!iaClienteId) {
+          setIaClienteId(clienteSelecionado.id);
+        }
+        if (clienteSelecionado.gemini_model) {
+          setModeloIa(clienteSelecionado.gemini_model);
+        }
+        setTemChavePropriaCliente(Boolean(clienteSelecionado.tem_chave_propria));
+        setApiKeyMascaradaCliente(clienteSelecionado.api_key_mascarada || null);
+        setTemApiKey(Boolean(clienteSelecionado.tem_api_key));
       }
       if (data.escolas?.length > 0 && !turmaEscolaId) {
         setTurmaEscolaId(data.escolas[0].id);
@@ -280,17 +302,25 @@ export default function AdminDashboardPage() {
           documento: clienteDocumento || null,
           email_contato: clienteEmail || null,
           telefone_contato: clienteTelefone || null,
+          gemini_api_key: clienteApiKey.trim() || null,
+          gemini_model: clienteModeloIa.trim() || "gemini-3.6-flash",
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Falha ao cadastrar cliente");
 
-      exibirSucesso(`Cliente "${data.cliente.nome}" cadastrado com sucesso!`);
+      exibirSucesso(
+        `Cliente "${data.cliente.nome}" cadastrado com sucesso (Modelo: ${clienteModeloIa})!`
+      );
       setClienteNome("");
       setClienteDocumento("");
       setClienteEmail("");
       setClienteTelefone("");
+      setClienteApiKey("");
+      if (data.cliente?.id) {
+        setIaClienteId(data.cliente.id);
+      }
       carregarDados();
     } catch (err: unknown) {
       setMensagemErro(err instanceof Error ? err.message : "Erro ao cadastrar cliente");
@@ -433,7 +463,21 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // 6. IA: Salvar e Testar
+  // Selecionar cliente para configurar IA e Chave de API
+  const selecionarClienteParaIa = (novoClienteId: string) => {
+    setIaClienteId(novoClienteId);
+    setApiKeyIaInput("");
+    setResultadoTeste(null);
+    const cli = clientes.find((c) => c.id === novoClienteId);
+    if (cli) {
+      setModeloIa(cli.gemini_model || "gemini-3.6-flash");
+      setTemChavePropriaCliente(Boolean(cli.tem_chave_propria));
+      setApiKeyMascaradaCliente(cli.api_key_mascarada || null);
+      setTemApiKey(Boolean(cli.tem_api_key));
+    }
+  };
+
+  // 6. IA por Cliente: Salvar e Testar
   const handleSalvarModelo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modeloIa.trim()) return;
@@ -444,14 +488,27 @@ export default function AdminDashboardPage() {
       const res = await fetch("/api/admin/configuracoes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modelo: modeloIa.trim() }),
+        body: JSON.stringify({
+          cliente_id: iaClienteId || null,
+          modelo: modeloIa.trim(),
+          api_key: apiKeyIaInput.trim() || undefined,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Erro ao salvar modelo");
-      exibirSucesso(`Modelo "${data.modelo}" salvo e ativado com sucesso para avaliações!`);
+      if (!res.ok) throw new Error(data.error || "Erro ao salvar configuração");
+
+      const nomeCli = clientes.find((c) => c.id === iaClienteId)?.nome || "Cliente";
+      exibirSucesso(
+        `Configuração de IA de "${nomeCli}" salva com sucesso (Modelo: ${data.modelo})!`
+      );
+      setApiKeyIaInput("");
+      setTemChavePropriaCliente(Boolean(data.tem_chave_propria));
+      setApiKeyMascaradaCliente(data.api_key_mascarada || null);
+      setTemApiKey(Boolean(data.tem_api_key));
       setTabelaConfigExiste(true);
+      carregarDados();
     } catch (err: unknown) {
-      setMensagemErro(err instanceof Error ? err.message : "Erro ao salvar modelo");
+      setMensagemErro(err instanceof Error ? err.message : "Erro ao salvar configuração");
     } finally {
       setSalvandoModelo(false);
     }
@@ -465,18 +522,22 @@ export default function AdminDashboardPage() {
       const res = await fetch("/api/admin/configuracoes/testar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modelo: modeloIa.trim() }),
+        body: JSON.stringify({
+          cliente_id: iaClienteId || null,
+          modelo: modeloIa.trim(),
+          api_key: apiKeyIaInput.trim() || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.sucesso) {
         setResultadoTeste({
           sucesso: false,
-          mensagem: data.erro || "Falha ao testar modelo.",
+          mensagem: data.erro || "Falha ao testar chave e modelo do cliente.",
         });
       } else {
         setResultadoTeste({
           sucesso: true,
-          mensagem: `Conexão bem-sucedida! O modelo respondeu perfeitamente em ${data.tempo_ms}ms.`,
+          mensagem: data.mensagem || `Conexão bem-sucedida! O modelo respondeu em ${data.tempo_ms}ms.`,
         });
       }
     } catch (err: unknown) {
@@ -1039,6 +1100,48 @@ end $$;`;
                   />
                 </div>
 
+                <div className="pt-2 border-t border-slate-800 space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-fuchsia-300 mb-1.5 flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-fuchsia-400" />
+                      Chave de API Gemini do Cliente
+                    </label>
+                    <input
+                      type="password"
+                      value={clienteApiKey}
+                      onChange={(e) => setClienteApiKey(e.target.value)}
+                      placeholder="AIzaSy... (chave Google AI Studio deste cliente)"
+                      className="w-full h-11 px-3.5 text-xs font-mono bg-slate-950 rounded-xl border border-slate-700 text-white placeholder-slate-500 focus:border-fuchsia-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-fuchsia-300 mb-1.5 flex items-center gap-1.5">
+                      <Bot className="w-3.5 h-3.5 text-fuchsia-400" />
+                      Modelo de IA do Cliente
+                    </label>
+                    <select
+                      value={clienteModeloIa}
+                      onChange={(e) => setClienteModeloIa(e.target.value)}
+                      className="w-full h-11 px-3 text-xs font-mono bg-slate-950 rounded-xl border border-slate-700 text-white focus:border-fuchsia-500 focus:outline-none"
+                    >
+                      {(modelosRecomendados.length > 0
+                        ? modelosRecomendados
+                        : [
+                            { id: "gemini-3.6-flash", nome: "Gemini 3.6 Flash" },
+                            { id: "gemini-3.5-flash-lite", nome: "Gemini 3.5 Flash-Lite" },
+                            { id: "gemini-3.5-transcribe", nome: "Gemini 3.5 Transcribe" },
+                            { id: "gemini-3.8-flash", nome: "Gemini 3.8 Flash" },
+                          ]
+                      ).map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.nome} ({m.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
                 <button
                   type="submit"
                   disabled={salvandoCliente || !clienteNome.trim()}
@@ -1104,22 +1207,53 @@ end $$;`;
                             {c.telefone_contato}
                           </p>
                         )}
+
+                        {/* Resumo de Chave de API e Modelo do Cliente */}
+                        <div className="mt-3 pt-2.5 border-t border-slate-900 flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-fuchsia-300 bg-fuchsia-500/10 border border-fuchsia-500/25 px-2 py-0.5 rounded-md">
+                            <Bot className="w-3 h-3 text-fuchsia-400" />
+                            {c.gemini_model || "gemini-3.6-flash"}
+                          </span>
+                          {c.tem_chave_propria ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-md">
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              API: {c.api_key_mascarada}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 rounded-md">
+                              <Lock className="w-3 h-3 text-amber-400" />
+                              Sem chave exclusiva
+                            </span>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                      <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs gap-2">
                         <span className="text-slate-400">
                           {c.total_turmas} turma(s) • {c.total_alunos} aluno(s)
                         </span>
-                        <button
-                          onClick={() => {
-                            setFiltroClienteId(c.id);
-                            setTab("escolas");
-                          }}
-                          className="font-bold text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1 cursor-pointer"
-                        >
-                          Ver Escolas
-                          <ArrowRight className="w-3 h-3" />
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => {
+                              selecionarClienteParaIa(c.id);
+                              setTab("ia");
+                            }}
+                            className="font-bold text-fuchsia-400 hover:text-fuchsia-300 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Bot className="w-3.5 h-3.5" />
+                            Chave & Modelo
+                          </button>
+                          <button
+                            onClick={() => {
+                              setFiltroClienteId(c.id);
+                              setTab("escolas");
+                            }}
+                            className="font-bold text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            Ver Escolas
+                            <ArrowRight className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1884,204 +2018,292 @@ end $$;`;
         )}
 
         {/* ========================================================================= */}
-        {/* ABA 6: MODELO IA                                                          */}
+        {/* ABA 6: MODELO IA & CHAVE DE API POR CLIENTE                               */}
         {/* ========================================================================= */}
         {tab === "ia" && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-            {/* Painel Esquerdo: Status */}
-            <div className="lg:col-span-4 space-y-6">
-              <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl">
-                <div className="flex items-center gap-3 mb-5 pb-4 border-b border-slate-800">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-fuchsia-600 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-fuchsia-500/20">
-                    <Bot className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-white text-base">Status do Motor IA</h3>
-                    <p className="text-xs text-slate-400">Google Gemini & Supabase</p>
-                  </div>
+          <div className="space-y-6">
+            {/* Seletor de Cliente no Topo da Aba IA */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
+                  <Building2 className="w-5 h-5" />
                 </div>
-
-                <div className="space-y-4">
-                  <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Chave de API</p>
-                      <p className="text-sm font-semibold text-slate-200 mt-0.5">GOOGLE_GENERATIVE_AI_API_KEY</p>
-                    </div>
-                    {temApiKey ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                        <Check className="w-3.5 h-3.5" />
-                        Configurada
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        Ausente
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Motor Speech-to-Text (Áudio)</p>
-                    <p className="text-sm font-black text-emerald-400 font-mono mt-1 flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      gemini-3.5-transcribe
-                    </p>
-                  </div>
-
-                  <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Modelo Ativo no Momento</p>
-                    <p className="text-base font-black text-fuchsia-400 font-mono mt-1 flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-fuchsia-400 shrink-0" />
-                      {modeloIa}
-                    </p>
-                  </div>
-
-                  <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Persistência no Banco</p>
-                      <p className="text-xs text-slate-400 mt-0.5">Tabela Supabase &apos;configuracoes&apos;</p>
-                    </div>
-                    {tabelaConfigExiste ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                        Ativa
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                        Criar Tabela
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Painel Direito: Configuração e Teste */}
-            <div className="lg:col-span-8 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl">
-              <div className="mb-6 pb-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
-                  <h3 className="font-bold text-white text-lg flex items-center gap-2">
-                    <Bot className="w-5 h-5 text-fuchsia-400" />
-                    Configurar Modelo de Inteligência Artificial
+                  <h3 className="font-bold text-white text-sm sm:text-base">
+                    Cliente Selecionado para Configuração de IA
                   </h3>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Defina qual versão do Google Gemini processará as avaliações de pronúncia e feedback dos alunos.
+                  <p className="text-xs text-slate-400">
+                    Cada cliente possui sua própria Chave de API do Google Gemini e sua configuração de Modelo.
                   </p>
                 </div>
               </div>
 
-              <form onSubmit={handleSalvarModelo} className="space-y-6">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
-                    Modelos Recomendados (Clique para selecionar)
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {modelosRecomendados.map((mod) => {
-                      const selecionado = modeloIa === mod.id;
-                      return (
-                        <button
-                          key={mod.id}
-                          type="button"
-                          onClick={() => {
-                            setModeloIa(mod.id);
-                            setResultadoTeste(null);
-                          }}
-                          className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative ${
-                            selecionado
-                              ? "bg-fuchsia-950/40 border-fuchsia-500 text-white shadow-lg shadow-fuchsia-500/10 ring-1 ring-fuchsia-500/50"
-                              : "bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700 hover:bg-slate-950"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="font-bold text-sm text-white">{mod.nome}</span>
-                            {selecionado && (
-                              <span className="w-5 h-5 rounded-full bg-fuchsia-500 text-white flex items-center justify-center">
-                                <Check className="w-3 h-3 stroke-[3]" />
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-slate-400 leading-relaxed">{mod.descricao}</p>
-                          <span className="inline-block mt-2 font-mono text-[11px] text-fuchsia-300/80 bg-fuchsia-500/10 px-2 py-0.5 rounded-md border border-fuchsia-500/20">
-                            {mod.id}
+              <div className="w-full sm:w-80">
+                <select
+                  value={iaClienteId}
+                  onChange={(e) => selecionarClienteParaIa(e.target.value)}
+                  className="w-full h-11 px-3.5 text-sm font-bold bg-slate-950 rounded-xl border border-fuchsia-500/50 text-white focus:border-fuchsia-400 focus:outline-none"
+                >
+                  {clientes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nome} ({c.gemini_model || "gemini-3.6-flash"})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              {/* Painel Esquerdo: Status do Cliente Selecionado */}
+              <div className="lg:col-span-4 space-y-6">
+                <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl">
+                  <div className="flex items-center gap-3 mb-5 pb-4 border-b border-slate-800">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-fuchsia-600 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-fuchsia-500/20">
+                      <Bot className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-white text-base">Status de IA do Cliente</h3>
+                      <p className="text-xs text-emerald-400 font-semibold">
+                        {clientes.find((c) => c.id === iaClienteId)?.nome || "Cliente Padrão"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                          Chave de API do Cliente
+                        </p>
+                        {temChavePropriaCliente ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                            <Check className="w-3 h-3" />
+                            Exclusiva
                           </span>
-                        </button>
-                      );
-                    })}
+                        ) : temApiKey ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                            Padrão Servidor
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                            <AlertCircle className="w-3 h-3" />
+                            Ausente
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs font-mono text-slate-300 mt-1.5">
+                        {temChavePropriaCliente && apiKeyMascaradaCliente
+                          ? `Chave salva: ${apiKeyMascaradaCliente}`
+                          : temApiKey
+                          ? "Usando chave global (cadastre uma chave exclusiva ao lado)"
+                          : "Nenhuma chave configurada para este cliente"}
+                      </p>
+                    </div>
+
+                    <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800">
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                        Motor Speech-to-Text (Áudio)
+                      </p>
+                      <p className="text-sm font-black text-emerald-400 font-mono mt-1 flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        gemini-3.5-transcribe
+                      </p>
+                    </div>
+
+                    <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800">
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                        Modelo Ativo deste Cliente
+                      </p>
+                      <p className="text-base font-black text-fuchsia-400 font-mono mt-1 flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-fuchsia-400 shrink-0" />
+                        {modeloIa}
+                      </p>
+                    </div>
+
+                    <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                          Escopo de Aplicação
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Todas as escolas, turmas e alunos deste cliente
+                        </p>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        Por Cliente
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Painel Direito: Configuração de Chave e Modelo do Cliente */}
+              <div className="lg:col-span-8 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl">
+                <div className="mb-6 pb-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                      <Bot className="w-5 h-5 text-fuchsia-400" />
+                      Chave de API e Modelo —{" "}
+                      <span className="text-emerald-400">
+                        {clientes.find((c) => c.id === iaClienteId)?.nome || "Cliente"}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Configure a chave de API do Google Gemini e o modelo de IA exclusivos para as escolas e turmas deste cliente.
+                    </p>
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                    Identificador do Modelo (ID exato da API Google)
-                  </label>
-                  <input
-                    type="text"
-                    value={modeloIa}
-                    onChange={(e) => {
-                      setModeloIa(e.target.value);
-                      setResultadoTeste(null);
-                    }}
-                    placeholder="ex: gemini-3.8-flash"
-                    className="w-full h-12 px-4 text-sm font-mono bg-slate-950 rounded-xl border border-slate-700 text-white placeholder-slate-500 focus:border-fuchsia-500 focus:outline-none focus:ring-1 focus:ring-fuchsia-500"
-                    required
-                  />
-                </div>
-
-                {resultadoTeste && (
-                  <div
-                    className={`p-4 rounded-2xl border text-xs flex items-start gap-3 animate-in fade-in slide-in-from-top-2 ${
-                      resultadoTeste.sucesso
-                        ? "bg-emerald-950/50 border-emerald-800 text-emerald-200"
-                        : "bg-rose-950/50 border-rose-800 text-rose-200"
-                    }`}
-                  >
-                    {resultadoTeste.sucesso ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    ) : (
-                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                    )}
-                    <span className="font-semibold leading-relaxed">{resultadoTeste.mensagem}</span>
+                <form onSubmit={handleSalvarModelo} className="space-y-6">
+                  {/* Campo Chave de API do Cliente */}
+                  <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5 text-fuchsia-400" />
+                        Chave de API Google Gemini do Cliente (GOOGLE_GENERATIVE_AI_API_KEY)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setMostrarApiKeyIa(!mostrarApiKeyIa)}
+                        className="text-[11px] font-bold text-fuchsia-400 hover:text-fuchsia-300 cursor-pointer"
+                      >
+                        {mostrarApiKeyIa ? "Ocultar" : "Mostrar"}
+                      </button>
+                    </div>
+                    <input
+                      type={mostrarApiKeyIa ? "text" : "password"}
+                      value={apiKeyIaInput}
+                      onChange={(e) => {
+                        setApiKeyIaInput(e.target.value);
+                        setResultadoTeste(null);
+                      }}
+                      placeholder={
+                        temChavePropriaCliente && apiKeyMascaradaCliente
+                          ? `Chave atual salva (${apiKeyMascaradaCliente}) — digite outra apenas se quiser substituir`
+                          : "Cole aqui a chave AIzaSy... exclusiva deste cliente"
+                      }
+                      className="w-full h-12 px-4 text-sm font-mono bg-slate-900 rounded-xl border border-slate-700 text-white placeholder-slate-500 focus:border-fuchsia-500 focus:outline-none focus:ring-1 focus:ring-fuchsia-500"
+                    />
+                    <p className="text-[11px] text-slate-400">
+                      {temChavePropriaCliente
+                        ? `✅ Este cliente já possui chave própria (${apiKeyMascaradaCliente}). Deixe em branco para manter a chave atual ou cole uma nova para atualizar.`
+                        : "💡 Cole a chave gerada no Google AI Studio para que todas as avaliações de alunos deste cliente utilizem a cota exclusiva dele."}
+                    </p>
                   </div>
-                )}
 
-                <div className="flex flex-wrap items-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleTestarModelo}
-                    disabled={testandoModelo || !modeloIa.trim()}
-                    className="inline-flex items-center gap-2 px-5 py-3 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:border-slate-600"
-                  >
-                    {testandoModelo ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-fuchsia-400" />
-                        Testando Conexão...
-                      </>
-                    ) : (
-                      <>
-                        <Zap className="w-4 h-4 text-amber-400" />
-                        Testar Modelo em Tempo Real
-                      </>
-                    )}
-                  </button>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+                      Modelo de IA para este Cliente (Clique para selecionar)
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {modelosRecomendados.map((mod) => {
+                        const selecionado = modeloIa === mod.id;
+                        return (
+                          <button
+                            key={mod.id}
+                            type="button"
+                            onClick={() => {
+                              setModeloIa(mod.id);
+                              setResultadoTeste(null);
+                            }}
+                            className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative ${
+                              selecionado
+                                ? "bg-fuchsia-950/40 border-fuchsia-500 text-white shadow-lg shadow-fuchsia-500/10 ring-1 ring-fuchsia-500/50"
+                                : "bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700 hover:bg-slate-950"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="font-bold text-sm text-white">{mod.nome}</span>
+                              {selecionado && (
+                                <span className="w-5 h-5 rounded-full bg-fuchsia-500 text-white flex items-center justify-center">
+                                  <Check className="w-3 h-3 stroke-[3]" />
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400 leading-relaxed">{mod.descricao}</p>
+                            <span className="inline-block mt-2 font-mono text-[11px] text-fuchsia-300/80 bg-fuchsia-500/10 px-2 py-0.5 rounded-md border border-fuchsia-500/20">
+                              {mod.id}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
 
-                  <button
-                    type="submit"
-                    disabled={salvandoModelo || !modeloIa.trim()}
-                    className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-indigo-600 hover:from-fuchsia-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-fuchsia-600/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
-                  >
-                    {salvandoModelo ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Salvando Configuração...
-                      </>
-                    ) : (
-                      <>
-                        <Check className="w-4 h-4" />
-                        Salvar e Ativar Modelo
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Identificador do Modelo do Cliente (ID exato da API Google)
+                    </label>
+                    <input
+                      type="text"
+                      value={modeloIa}
+                      onChange={(e) => {
+                        setModeloIa(e.target.value);
+                        setResultadoTeste(null);
+                      }}
+                      placeholder="ex: gemini-3.6-flash"
+                      className="w-full h-12 px-4 text-sm font-mono bg-slate-950 rounded-xl border border-slate-700 text-white placeholder-slate-500 focus:border-fuchsia-500 focus:outline-none focus:ring-1 focus:ring-fuchsia-500"
+                      required
+                    />
+                  </div>
+
+                  {resultadoTeste && (
+                    <div
+                      className={`p-4 rounded-2xl border text-xs flex items-start gap-3 animate-in fade-in slide-in-from-top-2 ${
+                        resultadoTeste.sucesso
+                          ? "bg-emerald-950/50 border-emerald-800 text-emerald-200"
+                          : "bg-rose-950/50 border-rose-800 text-rose-200"
+                      }`}
+                    >
+                      {resultadoTeste.sucesso ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      )}
+                      <span className="font-semibold leading-relaxed">{resultadoTeste.mensagem}</span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleTestarModelo}
+                      disabled={testandoModelo || !modeloIa.trim()}
+                      className="inline-flex items-center gap-2 px-5 py-3 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:border-slate-600"
+                    >
+                      {testandoModelo ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-fuchsia-400" />
+                          Testando Chave e Modelo...
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-4 h-4 text-amber-400" />
+                          Testar Chave e Modelo do Cliente
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="submit"
+                      disabled={salvandoModelo || !modeloIa.trim()}
+                      className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-indigo-600 hover:from-fuchsia-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-fuchsia-600/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
+                    >
+                      {salvandoModelo ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Salvando para o Cliente...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-4 h-4" />
+                          Salvar Chave e Modelo do Cliente
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           </div>
         )}

@@ -5,6 +5,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { decodificarWav } from "@/lib/audio/wav";
 import { avaliarQualidade } from "@/lib/audio/qualidade";
 import { analisarPronuncia, ConfigIAAusenteError } from "@/lib/pronuncia/analisar";
+import {
+  obterConfigIaCliente,
+  resolverClienteIdPorSessaoOuAluno,
+} from "@/lib/pronuncia/config-cliente";
 
 export const maxDuration = 60;
 
@@ -69,7 +73,7 @@ export async function POST(request: NextRequest) {
     // A sessão precisa ser do próprio aluno, e a pergunta, da atividade da sessão
     const { data: sessao } = await admin
       .from("sessoes")
-      .select("id, aluno_id, atividade_id")
+      .select("id, aluno_id, turma_id, atividade_id")
       .eq("id", sessao_id)
       .maybeSingle();
     if (!sessao || sessao.aluno_id !== user.id) {
@@ -101,16 +105,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Análise com IA
-    const analise = await analisarPronuncia(bytes, {
-      enunciado: pergunta.enunciado,
-      instrucao_pt: pergunta.instrucao_pt,
-      respostas_esperadas: pergunta.respostas_esperadas,
-      texto_referencia: pergunta.texto_referencia,
-      foco_avaliacao: pergunta.foco_avaliacao,
-      tipo: pergunta.tipo,
-      imagem_path: pergunta.imagem_path,
+    // Resolver Cliente (Rede/Mantenedora) da sessão para usar a Chave de API e Modelo daquele Cliente
+    const clienteId = await resolverClienteIdPorSessaoOuAluno({
+      turmaId: sessao.turma_id,
+      alunoId: user.id,
     });
+    const configCliente = await obterConfigIaCliente(clienteId);
+
+    // Análise com IA usando chave e modelo do Cliente
+    const analise = await analisarPronuncia(
+      bytes,
+      {
+        enunciado: pergunta.enunciado,
+        instrucao_pt: pergunta.instrucao_pt,
+        respostas_esperadas: pergunta.respostas_esperadas,
+        texto_referencia: pergunta.texto_referencia,
+        foco_avaliacao: pergunta.foco_avaliacao,
+        tipo: pergunta.tipo,
+        imagem_path: pergunta.imagem_path,
+      },
+      {
+        clienteId,
+        apiKey: configCliente.apiKey,
+        modelo: configCliente.modeloConfigurado,
+      }
+    );
 
     // Salvar áudio + análise para o professor (falha aqui não impede o feedback ao aluno)
     let salvo = false;

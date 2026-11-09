@@ -79,6 +79,10 @@ export interface OpcoesTranscricaoGemini {
   timeoutMs?: number;
   /** Se true (padrão), faz fallback automático via Files API + Interactions API caso `gemini-3.5-transcribe` não esteja habilitado na chave. */
   permitirFallbackMultimodal?: boolean;
+  /** Chave de API opcional do Cliente (sobrepõe a chave padrão do ambiente). */
+  apiKey?: string;
+  /** Instância opcional já inicializada do cliente `@google/genai`. */
+  aiClient?: GoogleGenAI;
 }
 
 export interface ResultadoTranscricaoGemini {
@@ -98,8 +102,8 @@ export function obterChaveGemini(): string | undefined {
   return key || undefined;
 }
 
-export function criarClienteGemini(): GoogleGenAI {
-  const apiKey = obterChaveGemini();
+export function criarClienteGemini(apiKeyOverride?: string): GoogleGenAI {
+  const apiKey = apiKeyOverride?.replace(/^["']|["']$/g, "").trim() || obterChaveGemini();
   if (!apiKey) {
     throw new Error("GOOGLE_GENERATIVE_AI_API_KEY não configurada");
   }
@@ -309,7 +313,7 @@ function construirPromptFallbackTranscricao(opcoes: {
 export async function transcreverAudioGemini(
   opcoes: OpcoesTranscricaoGemini
 ): Promise<ResultadoTranscricaoGemini> {
-  const ai = criarClienteGemini();
+  const ai = opcoes.aiClient ?? criarClienteGemini(opcoes.apiKey);
   const modo: ModoTranscricaoGemini = opcoes.modo ?? "verbatim";
   const permitirFallback = opcoes.permitirFallbackMultimodal ?? true;
 
