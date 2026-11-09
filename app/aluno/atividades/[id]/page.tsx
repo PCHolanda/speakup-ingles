@@ -732,21 +732,10 @@ export default function AlunoAtividadePlayerPage({
               </div>
 
               {/* O que foi entendido, com palavras coloridas e clicáveis para ouvir */}
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <div className="flex items-center justify-between mb-1.5">
                 <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
                   O que entendemos (clique na palavra para ouvir)
                 </p>
-                {audioUrl && (
-                  <button
-                    type="button"
-                    onClick={ouvirAudioAluno}
-                    disabled={reproduzindoAudioAluno}
-                    className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition-all cursor-pointer disabled:opacity-60"
-                  >
-                    <Volume2 className={`w-3.5 h-3.5 ${reproduzindoAudioAluno ? "animate-pulse" : ""}`} />
-                    {reproduzindoAudioAluno ? "Ouvindo sua fala..." : "Ouvir o que você falou"}
-                  </button>
-                )}
               </div>
               <div className="flex flex-wrap gap-1.5 mb-4">
                 {analiseAtual.palavras.length > 0 ? (
@@ -1293,36 +1282,37 @@ export default function AlunoAtividadePlayerPage({
                 </div>
               </div>
 
-              {/* Frase modelo e comparação com áudio do aluno */}
-              <div className="p-3.5 bg-slate-900 border border-slate-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              {/* Frase modelo e comparação com áudio do aluno (botões embaixo da frase) */}
+              <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl flex flex-col gap-3">
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
                     Exemplo de resposta
                   </p>
-                  <p className="text-sm font-bold text-white mt-0.5">&quot;{analiseAtual.frase_modelo}&quot;</p>
+                  <p className="text-base font-bold text-white mt-1">&quot;{analiseAtual.frase_modelo}&quot;</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
+
+                <div className="pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => falarPergunta(analiseAtual.frase_modelo)}
+                    disabled={falando}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 px-3.5 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-60"
+                  >
+                    <Volume2 className={`w-4 h-4 ${falando ? "animate-pulse" : ""}`} />
+                    {falando ? "Ouvindo Modelo..." : "Ouvir Modelo (Exemplo de resposta)"}
+                  </button>
+
                   {audioUrl && (
                     <button
                       type="button"
                       onClick={ouvirAudioAluno}
                       disabled={reproduzindoAudioAluno}
-                      className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-3 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-60"
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-3.5 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-60"
                     >
                       <Volume2 className={`w-4 h-4 ${reproduzindoAudioAluno ? "animate-pulse" : ""}`} />
                       {reproduzindoAudioAluno ? "Ouvindo sua voz..." : "Ouvir o que você falou"}
                     </button>
                   )}
-
-                  <button
-                    type="button"
-                    onClick={() => falarPergunta(analiseAtual.frase_modelo)}
-                    disabled={falando}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 px-3 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-60"
-                  >
-                    <Volume2 className={`w-4 h-4 ${falando ? "animate-pulse" : ""}`} />
-                    {falando ? "Ouvindo Modelo..." : "Ouvir Modelo (Exemplo de resposta)"}
-                  </button>
                 </div>
               </div>
             </section>
