@@ -151,6 +151,7 @@ export default function AlunoAtividadePlayerPage({
 
   // Estados de Áudio e Gravação
   const [falando, setFalando] = useState(false);
+  const [reproduzindoAudioAluno, setReproduzindoAudioAluno] = useState(false);
   const [palavraReproduzindo, setPalavraReproduzindo] = useState<string | null>(null);
   const [gravando, setGravando] = useState(false);
   const [tempoGravacao, setTempoGravacao] = useState(0);
@@ -169,6 +170,7 @@ export default function AlunoAtividadePlayerPage({
 
   const gravadorRef = useRef<GravadorWav | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const audioAlunoRef = useRef<HTMLAudioElement | null>(null);
 
   const gravacaoAtual = respostasGravadas[indiceAtual];
   const audioUrl = gravacaoAtual?.url ?? null;
@@ -205,6 +207,11 @@ export default function AlunoAtividadePlayerPage({
 
   // Falar o enunciado da pergunta ou frase completa (TTS)
   const falarPergunta = (texto: string) => {
+    if (audioAlunoRef.current) {
+      audioAlunoRef.current.pause();
+      audioAlunoRef.current.currentTime = 0;
+      setReproduzindoAudioAluno(false);
+    }
     if (!window.speechSynthesis) return;
 
     window.speechSynthesis.cancel();
@@ -217,6 +224,29 @@ export default function AlunoAtividadePlayerPage({
     utterance.onerror = () => setFalando(false);
 
     window.speechSynthesis.speak(utterance);
+  };
+
+  // Reproduzir o áudio real gravado pelo aluno
+  const ouvirAudioAluno = () => {
+    if (!audioUrl) return;
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setFalando(false);
+      setPalavraReproduzindo(null);
+    }
+
+    if (audioAlunoRef.current) {
+      audioAlunoRef.current.pause();
+      audioAlunoRef.current.currentTime = 0;
+    }
+
+    const player = new Audio(audioUrl);
+    audioAlunoRef.current = player;
+    setReproduzindoAudioAluno(true);
+
+    player.onended = () => setReproduzindoAudioAluno(false);
+    player.onerror = () => setReproduzindoAudioAluno(false);
+    player.play().catch(() => setReproduzindoAudioAluno(false));
   };
 
   // Falar uma palavra específica isolada com pronúncia lenta e articulada
@@ -702,10 +732,21 @@ export default function AlunoAtividadePlayerPage({
               </div>
 
               {/* O que foi entendido, com palavras coloridas e clicáveis para ouvir */}
-              <div className="flex items-center justify-between mb-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                 <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
                   O que entendemos (clique na palavra para ouvir)
                 </p>
+                {audioUrl && (
+                  <button
+                    type="button"
+                    onClick={ouvirAudioAluno}
+                    disabled={reproduzindoAudioAluno}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition-all cursor-pointer disabled:opacity-60"
+                  >
+                    <Volume2 className={`w-3.5 h-3.5 ${reproduzindoAudioAluno ? "animate-pulse" : ""}`} />
+                    {reproduzindoAudioAluno ? "Ouvindo sua fala..." : "Ouvir o que você falou"}
+                  </button>
+                )}
               </div>
               <div className="flex flex-wrap gap-1.5 mb-4">
                 {analiseAtual.palavras.length > 0 ? (
@@ -1252,20 +1293,37 @@ export default function AlunoAtividadePlayerPage({
                 </div>
               </div>
 
-              {/* Frase modelo */}
-              <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-between gap-3">
+              {/* Frase modelo e comparação com áudio do aluno */}
+              <div className="p-3.5 bg-slate-900 border border-slate-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Exemplo de resposta</p>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    Exemplo de resposta
+                  </p>
                   <p className="text-sm font-bold text-white mt-0.5">&quot;{analiseAtual.frase_modelo}&quot;</p>
                 </div>
-                <button
-                  onClick={() => falarPergunta(analiseAtual.frase_modelo)}
-                  disabled={falando}
-                  className="shrink-0 inline-flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
-                >
-                  <Volume2 className="w-4 h-4" />
-                  Ouvir
-                </button>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  {audioUrl && (
+                    <button
+                      type="button"
+                      onClick={ouvirAudioAluno}
+                      disabled={reproduzindoAudioAluno}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-3 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-60"
+                    >
+                      <Volume2 className={`w-4 h-4 ${reproduzindoAudioAluno ? "animate-pulse" : ""}`} />
+                      {reproduzindoAudioAluno ? "Ouvindo sua voz..." : "Ouvir o que você falou"}
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => falarPergunta(analiseAtual.frase_modelo)}
+                    disabled={falando}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 px-3 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-60"
+                  >
+                    <Volume2 className={`w-4 h-4 ${falando ? "animate-pulse" : ""}`} />
+                    {falando ? "Ouvindo Modelo..." : "Ouvir Modelo (Exemplo de resposta)"}
+                  </button>
+                </div>
               </div>
             </section>
           )}
