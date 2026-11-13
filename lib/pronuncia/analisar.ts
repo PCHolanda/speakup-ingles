@@ -89,7 +89,7 @@ Calibração de Nota de Fluência (1 a 4):
 ## 4. CRITÉRIO: ESTRUTURA
 O que observar:
 - **Uso de frases completas (OBRIGATÓRIO para nota 3 ou 4)**: O aluno formulou uma oração completa com sujeito e verbo (ex: "My name is Paul.", "It is blue.", "There are two dogs.", "I am ten years old.") ou falou apenas palavras soltas isoladas / apenas o primeiro nome (ex: "Paul", "Blue", "Two", "Brazil", "Cat")?
-- **REGRA RIGOROSA DE FRASE COMPLETA**: Se o aluno disser apenas o próprio nome isolado (ex: "Paulo", "Paul") ou apenas 1 ou 2 palavras sem verbo (ex: "Ten", "Brazil", "White", "Cat"), `frase_completa` DEVE ser `false` e a nota de `estrutura` DEVE ser no máximo `2` (NUNCA dê 3 ou 4 para palavras soltas!). Além disso, em `ponto_melhorar`, oriente explicitamente o aluno a dizer a frase completa (ex: "My name is ...").
+- **REGRA RIGOROSA DE FRASE COMPLETA**: Se o aluno disser apenas o próprio nome isolado (ex: "Paulo", "Paul") ou apenas 1 ou 2 palavras sem verbo (ex: "Ten", "Brazil", "White", "Cat"), "frase_completa" DEVE ser false e a nota de "estrutura" DEVE ser no máximo 2 (NUNCA dê 3 ou 4 para palavras soltas!). Além disso, em "ponto_melhorar", oriente explicitamente o aluno a dizer a frase completa (ex: "My name is ...").
 - **Ordem das palavras**: Respeitou a ordem sintática natural do inglês (SVO: Sujeito + Verbo + Objeto; Adjetivo ANTES do Substantivo: "a blue car" e NUNCA "a car blue")?
 - **Concordância**: Empregou concordância básica A1 ("He is" / "They are", singular e plural).
 
@@ -676,7 +676,7 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
       }
     }
 
-    const transcricaoFinal = (
+    const transcricaoFinal: string = String(
       transcricaoGemini?.texto?.trim() ||
       jsonResposta.transcricao ||
       ""
