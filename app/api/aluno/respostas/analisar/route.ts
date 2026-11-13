@@ -149,6 +149,11 @@ export async function POST(request: NextRequest) {
         .upload(audioPath, bytes, { contentType: "audio/wav", upsert: false });
       if (upErr) throw upErr;
 
+      const resultadoDb =
+        analise.resultado === "excellent" || analise.resultado === "good_job"
+          ? "good_job"
+          : "try_again";
+
       const linha = {
         sessao_id,
         pergunta_id,
@@ -157,7 +162,8 @@ export async function POST(request: NextRequest) {
         transcricao: analise.transcricao,
         metricas: {
           qualidade: qualidade.metricas,
-          modelo: analise.modelo_utilizado || process.env.GEMINI_MODEL || "gemini-3.8-flash",
+          modelo: analise.modelo_utilizado || process.env.GEMINI_MODEL || "gemini-3.6-flash",
+          nivel_incentivo: analise.resultado,
           ...(analise.detalhes_criterios ? { detalhes_criterios: analise.detalhes_criterios } : {}),
           ...(analise.analise_detalhada ? { analise_detalhada: analise.analise_detalhada } : {}),
         },
@@ -165,8 +171,9 @@ export async function POST(request: NextRequest) {
         nota_vocabulario: analise.nota_vocabulario,
         nota_fluencia: analise.nota_fluencia,
         nota_estrutura: analise.nota_estrutura,
-        resultado: analise.resultado,
+        resultado: resultadoDb,
         feedback: {
+          nivel_incentivo: analise.resultado,
           ponto_forte: analise.ponto_forte,
           ponto_melhorar: analise.ponto_melhorar,
           palavras: analise.palavras,

@@ -88,14 +88,15 @@ Calibração de Nota de Fluência (1 a 4):
 
 ## 4. CRITÉRIO: ESTRUTURA
 O que observar:
-- **Uso de frases completas**: O aluno formulou uma oração completa com sujeito e verbo (ex: "It is blue.", "There are two dogs.", "I am ten years old.") ou falou apenas palavras soltas isoladas (ex: "Blue", "Two")?
+- **Uso de frases completas (OBRIGATÓRIO para nota 3 ou 4)**: O aluno formulou uma oração completa com sujeito e verbo (ex: "My name is Paul.", "It is blue.", "There are two dogs.", "I am ten years old.") ou falou apenas palavras soltas isoladas / apenas o primeiro nome (ex: "Paul", "Blue", "Two", "Brazil", "Cat")?
+- **REGRA RIGOROSA DE FRASE COMPLETA**: Se o aluno disser apenas o próprio nome isolado (ex: "Paulo", "Paul") ou apenas 1 ou 2 palavras sem verbo (ex: "Ten", "Brazil", "White", "Cat"), `frase_completa` DEVE ser `false` e a nota de `estrutura` DEVE ser no máximo `2` (NUNCA dê 3 ou 4 para palavras soltas!). Além disso, em `ponto_melhorar`, oriente explicitamente o aluno a dizer a frase completa (ex: "My name is ...").
 - **Ordem das palavras**: Respeitou a ordem sintática natural do inglês (SVO: Sujeito + Verbo + Objeto; Adjetivo ANTES do Substantivo: "a blue car" e NUNCA "a car blue")?
 - **Concordância**: Empregou concordância básica A1 ("He is" / "They are", singular e plural).
 
 Calibração de Nota de Estrutura (1 a 4):
-- 4: Frase completa e correta, com ordem das palavras perfeitamente respeitada.
-- 3: Frase quase completa com pequeno deslize que não prejudica a estrutura geral.
-- 2: Respondeu apenas com palavra solta isolada (sem formar frase) ou com ordem invertida ("car blue").
+- 4: Frase completa (com sujeito e verbo) e correta, com ordem das palavras perfeitamente respeitada.
+- 3: Frase completa (com sujeito e verbo) com pequeno deslize que não prejudica a estrutura geral.
+- 2: Respondeu apenas com palavra solta isolada (ex: só o primeiro nome, só o número, só a cor, sem formar frase com sujeito e verbo) ou com ordem invertida ("car blue").
 - 1: Estrutura gramatical incompreensível ou inexistente.
 
 ## REGRAS CRÍTICAS:
@@ -297,6 +298,8 @@ export interface DetalhesCriterios {
   };
 }
 
+export type NivelIncentivo = "excellent" | "good_job" | "doing_ok" | "try_again";
+
 export interface AnalisePronuncia {
   transcricao: string;
   respondeu_pergunta: boolean;
@@ -304,7 +307,7 @@ export interface AnalisePronuncia {
   nota_fluencia: number;  // 1 a 4
   nota_vocabulario: number; // 1 a 4
   nota_estrutura: number; // 1 a 4
-  resultado: "good_job" | "try_again";
+  resultado: NivelIncentivo;
   ponto_forte: string;
   ponto_melhorar: string;
   palavras: PalavraAnalise[];
@@ -744,9 +747,37 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
     const cEstrutura = c.estrutura || {};
 
     const notaPronuncia = Math.min(Math.max(Number(cPronuncia.nota) || 3, 1), 4);
-    const notaVocabulario = Math.min(Math.max(Number(cVocabulario.nota) || 3, 1), 4);
+    let notaVocabulario = Math.min(Math.max(Number(cVocabulario.nota) || 3, 1), 4);
     const notaFluencia = Math.min(Math.max(Number(cFluencia.nota) || 3, 1), 4);
-    const notaEstrutura = Math.min(Math.max(Number(cEstrutura.nota) || 3, 1), 4);
+    let notaEstrutura = Math.min(Math.max(Number(cEstrutura.nota) || 3, 1), 4);
+
+    // Verificação determinística de Frase Completa (impede que resposta de 1 palavra / só primeiro nome receba Good Job ou Excellent)
+    const tokensSignificativos = transcricaoFinal
+      .toLowerCase()
+      .replace(/[.,!?;:"'()\[\]]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 0 && !["uh", "um", "ah", "er", "hmm", "eh"].includes(t));
+
+    const temPadraoFraseCompleta =
+      /\b(i am|i'm|im|my name is|my name's|it is|it's|its|this is|that is|the cat is|they are|there is|there are|yes i|no i|i have|i wake|i go|i brush|i get|i do|on the left|on the right)\b/i.test(
+        transcricaoFinal
+      ) ||
+      (tokensSignificativos.length >= 3 &&
+        /\b(am|is|are|was|were|have|has|do|don't|dont|doesn't|doesnt|wake|wakes|go|goes|brush|get|eat|drink|play|live|like|can)\b/i.test(
+          transcricaoFinal
+        ));
+
+    const fraseCompleta =
+      Boolean(cEstrutura.frase_completa ?? true) &&
+      tokensSignificativos.length >= 2 &&
+      temPadraoFraseCompleta;
+
+    if (!fraseCompleta) {
+      notaEstrutura = Math.min(notaEstrutura, 2);
+      if (tokensSignificativos.length <= 1) {
+        notaVocabulario = Math.min(notaVocabulario, 3);
+      }
+    }
 
     // Palavras avaliadas com feedback fonético
     const rawPalavras: Array<any> = jsonResposta.palavras_avaliadas || [];
@@ -781,8 +812,39 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
         ? jsonResposta.resposta_ideal.frase.trim()
         : fraseExemploPadrao;
 
-    const resultadoFinal: "good_job" | "try_again" =
-      notaPronuncia >= 3 && notaVocabulario >= 2 && notaEstrutura >= 2 ? "good_job" : "try_again";
+    const adequacaoTema = Boolean(cVocabulario.adequacao_tema ?? true);
+    const mediaNotas = (notaPronuncia + notaVocabulario + notaFluencia + notaEstrutura) / 4;
+
+    // 4 níveis de incentivo:
+    // - "excellent": frase completa + estrutura 4 + pronúncia 4 + vocabulário/fluência >= 3 (média >= 3.75)
+    // - "good_job": frase completa + estrutura >= 3 + pronúncia >= 3 + vocabulário >= 3 + fluência >= 2
+    // - "doing_ok": respondeu ao tema com pronúncia/vocabulário >= 2, mas sem frase completa (ex: só o primeiro nome) ou com pontos a melhorar
+    // - "try_again": não respondeu à pergunta, pronúncia/vocabulário insuficiente (nota 1) ou média < 2
+    let resultadoFinal: NivelIncentivo = "try_again";
+    if (
+      fraseCompleta &&
+      adequacaoTema &&
+      notaEstrutura === 4 &&
+      notaPronuncia === 4 &&
+      notaVocabulario >= 3 &&
+      notaFluencia >= 3 &&
+      mediaNotas >= 3.75
+    ) {
+      resultadoFinal = "excellent";
+    } else if (
+      fraseCompleta &&
+      adequacaoTema &&
+      notaEstrutura >= 3 &&
+      notaPronuncia >= 3 &&
+      notaVocabulario >= 3 &&
+      notaFluencia >= 2
+    ) {
+      resultadoFinal = "good_job";
+    } else if (adequacaoTema && notaPronuncia >= 2 && notaVocabulario >= 2 && mediaNotas >= 2.0) {
+      resultadoFinal = "doing_ok";
+    } else {
+      resultadoFinal = "try_again";
+    }
 
     const pausasCalculadas =
       transcricaoGemini?.metricasFluencia.pausasLongas ?? (cFluencia.pausas_excessivas || 0);
@@ -790,6 +852,17 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
       Number(cFluencia.hesitacoes) || 0,
       transcricaoGemini?.metricasFluencia.hesitacoesDetectadas ?? 0
     );
+
+    const observacaoEstruturaPadrao = !fraseCompleta
+      ? `Resposta curta ou palavra isolada ("${transcricaoFinal}"). Pratique responder com uma frase completa como "${fraseModeloFinal}".`
+      : cEstrutura.observacoes || "Estrutura gramatical e ordem das palavras observadas.";
+
+    let pontoMelhorarFinal =
+      jsonResposta.feedback_pedagogico?.ponto_melhorar ||
+      "Continue praticando para aperfeiçoar sua pronúncia.";
+    if (!fraseCompleta && !/frase completa|full sentence|my name is|i am|it is/i.test(pontoMelhorarFinal)) {
+      pontoMelhorarFinal = `Você disse apenas "${transcricaoFinal}". Tente responder usando uma frase completa, por exemplo: "${fraseModeloFinal}"!`;
+    }
 
     const detalhesCriterios: DetalhesCriterios = {
       pronuncia: {
@@ -803,7 +876,7 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
         nota: notaVocabulario,
         palavras_esperadas_utilizadas: cVocabulario.palavras_esperadas_utilizadas || [],
         variedade: cVocabulario.variedade || "adequada",
-        adequacao_tema: cVocabulario.adequacao_tema ?? true,
+        adequacao_tema: adequacaoTema,
         observacoes: cVocabulario.observacoes || "Vocabulário adequado ao tema da atividade.",
       },
       fluencia: {
@@ -815,15 +888,15 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
       },
       estrutura: {
         nota: notaEstrutura,
-        frase_completa: cEstrutura.frase_completa ?? true,
-        ordem_palavras_correta: cEstrutura.ordem_palavras_correta ?? true,
-        observacoes: cEstrutura.observacoes || "Estrutura gramatical e ordem das palavras observadas.",
+        frase_completa: fraseCompleta,
+        ordem_palavras_correta: cEstrutura.ordem_palavras_correta ?? fraseCompleta,
+        observacoes: observacaoEstruturaPadrao,
       },
     };
 
     return {
       transcricao: transcricaoFinal,
-      respondeu_pergunta: cVocabulario.adequacao_tema ?? true,
+      respondeu_pergunta: adequacaoTema,
       nota_pronuncia: notaPronuncia,
       nota_fluencia: notaFluencia,
       nota_vocabulario: notaVocabulario,
@@ -831,9 +904,7 @@ FOCO_AVALIACAO: ${pergunta.foco_avaliacao?.join(", ") || "Pronúncia geral, clar
       resultado: resultadoFinal,
       ponto_forte:
         jsonResposta.feedback_pedagogico?.ponto_forte || "Muito bom empenho na resposta em inglês!",
-      ponto_melhorar:
-        jsonResposta.feedback_pedagogico?.ponto_melhorar ||
-        "Continue praticando para aperfeiçoar sua pronúncia.",
+      ponto_melhorar: pontoMelhorarFinal,
       palavras: palavrasAdaptadas,
       frase_modelo: fraseModeloFinal,
       modelo_utilizado: modeloNome,

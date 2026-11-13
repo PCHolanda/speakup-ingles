@@ -87,7 +87,7 @@ interface Analise {
   nota_fluencia: number;
   nota_vocabulario: number;
   nota_estrutura: number;
-  resultado: "good_job" | "try_again";
+  resultado: "excellent" | "good_job" | "doing_ok" | "try_again";
   ponto_forte: string;
   ponto_melhorar: string;
   palavras: PalavraAnalise[];
@@ -716,16 +716,26 @@ export default function AlunoAtividadePlayerPage({
               id="resultado-pronuncia"
               className="mt-2 bg-slate-950/80 border border-slate-800 rounded-2xl p-5 animate-in fade-in slide-in-from-bottom-2"
             >
-              <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <h3 className="text-sm font-black text-white">Análise da Pronúncia</h3>
-                {analiseAtual.resultado === "good_job" ? (
-                  <span className="inline-flex items-center gap-1.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider">
-                    <Trophy className="w-3.5 h-3.5" />
+                {analiseAtual.resultado === "excellent" ? (
+                  <span className="inline-flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 px-3.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wider shadow-sm shadow-emerald-500/15">
+                    <Trophy className="w-3.5 h-3.5 text-emerald-400" />
+                    Excellent!
+                  </span>
+                ) : analiseAtual.resultado === "good_job" ? (
+                  <span className="inline-flex items-center gap-1.5 bg-sky-500/15 text-sky-300 border border-sky-500/30 px-3.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wider">
+                    <ThumbsUp className="w-3.5 h-3.5 text-sky-400" />
                     Good Job!
                   </span>
+                ) : analiseAtual.resultado === "doing_ok" ? (
+                  <span className="inline-flex items-center gap-1.5 bg-amber-500/15 text-amber-300 border border-amber-500/30 px-3.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wider">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    Doing OK, but you can improve!
+                  </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 bg-amber-500/15 text-amber-400 border border-amber-500/30 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider">
-                    <RotateCcw className="w-3.5 h-3.5" />
+                  <span className="inline-flex items-center gap-1.5 bg-rose-500/15 text-rose-300 border border-rose-500/30 px-3.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wider">
+                    <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
                     Try Again!
                   </span>
                 )}
@@ -1311,6 +1321,17 @@ export default function AlunoAtividadePlayerPage({
                     >
                       <Volume2 className={`w-4 h-4 ${reproduzindoAudioAluno ? "animate-pulse" : ""}`} />
                       {reproduzindoAudioAluno ? "Ouvindo sua voz..." : "Ouvir o que você falou"}
+                    </button>
+                  )}
+
+                  {(analiseAtual.resultado === "doing_ok" || analiseAtual.resultado === "try_again") && (
+                    <button
+                      type="button"
+                      onClick={iniciarGravacao}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300 hover:text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 px-3.5 py-2 rounded-xl transition-all cursor-pointer ml-auto"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Try Again (Gravar Frase Completa)
                     </button>
                   )}
                 </div>
