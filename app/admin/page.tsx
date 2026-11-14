@@ -31,8 +31,10 @@ import {
   Filter,
   ArrowRight,
   Shield,
+  FileText,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import GerenciadorAvaliacoes from "@/components/admin/GerenciadorAvaliacoes";
 
 interface Cliente {
   id: string;
@@ -102,7 +104,7 @@ interface Aluno {
   created_at: string;
 }
 
-type TabType = "clientes" | "escolas" | "turmas" | "alunos" | "professores" | "ia";
+type TabType = "clientes" | "escolas" | "turmas" | "alunos" | "professores" | "avaliacoes" | "ia";
 
 export default function AdminDashboardPage() {
   const router = useRouter();
@@ -921,6 +923,18 @@ end $$;`;
           </button>
 
           <button
+            onClick={() => setTab("avaliacoes")}
+            className={`flex-1 min-w-[150px] flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+              tab === "avaliacoes"
+                ? "bg-blue-600 text-white shadow-lg shadow-blue-600/30"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            Avaliações & Questões
+          </button>
+
+          <button
             onClick={() => setTab("ia")}
             className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
               tab === "ia"
@@ -932,6 +946,9 @@ end $$;`;
             Modelo IA
           </button>
         </div>
+
+        {/* ABA: AVALIAÇÕES & QUESTÕES */}
+        {tab === "avaliacoes" && <GerenciadorAvaliacoes />}
 
         {/* Barra Global de Filtros em Cascata (Visível nas abas de Escolas, Turmas e Alunos) */}
         {(tab === "escolas" || tab === "turmas" || tab === "alunos") && (

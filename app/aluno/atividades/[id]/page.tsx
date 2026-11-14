@@ -109,10 +109,45 @@ interface Pergunta {
   secao: string;
   ordem: number;
   tipo: string;
+  tem_imagem?: boolean;
   enunciado: string;
   instrucao_pt: string | null;
   dicas: string[] | null;
   imagem_path?: string | null;
+  respostas_esperadas?: string[];
+  tempo_gravacao_s?: 5 | 10 | 20;
+  audio_modelo_professor_url?: string | null;
+}
+
+interface AvaliacaoGeralFinal {
+  resultado_geral: "excellent" | "good_job" | "doing_ok" | "try_again";
+  media_pronuncia: number;
+  media_fluencia: number;
+  media_vocabulario: number;
+  media_estrutura: number;
+  media_geral: number;
+  total_perguntas: number;
+  total_respondidas: number;
+  total_frases_completas: number;
+  resumo_ia: string;
+  pontos_fortes: string[];
+  pontos_melhorar: string[];
+  palavras_praticar: string[];
+  modelo_utilizado?: string;
+}
+
+function obterTempoMaximoPergunta(p?: Pergunta | null): 5 | 10 | 20 {
+  if (!p) return 10;
+  if (p.tempo_gravacao_s === 5) return 5;
+  if (p.tempo_gravacao_s === 20) return 20;
+  if (p.tempo_gravacao_s === 10) return 10;
+  return p.tipo === "comparacao" ? 20 : 10;
+}
+
+function rotuloTempoGravacao(segundos: 5 | 10 | 20): string {
+  if (segundos === 5) return "Curta (máx. 5s)";
+  if (segundos === 20) return "Longa (máx. 20s)";
+  return "Média (máx. 10s)";
 }
 
 function resolverUrlImagem(imagemPath?: string | null): string | null {
@@ -121,6 +156,10 @@ function resolverUrlImagem(imagemPath?: string | null): string | null {
   if (!limpo) return null;
   if (limpo.startsWith("http://") || limpo.startsWith("https://") || limpo.startsWith("/")) {
     return limpo;
+  }
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (supabaseUrl && limpo.startsWith("imagens-questoes/")) {
+    return `${supabaseUrl}/storage/v1/object/public/atividades/${limpo}`;
   }
   return `/seed/${limpo}`;
 }
@@ -164,12 +203,15 @@ export default function AlunoAtividadePlayerPage({
   // Estados de Áudio e Gravação
   const [falando, setFalando] = useState(false);
   const [reproduzindoAudioAluno, setReproduzindoAudioAluno] = useState(false);
+  const [reproduzindoAudioProfessor, setReproduzindoAudioProfessor] = useState(false);
   const [palavraReproduzindo, setPalavraReproduzindo] = useState<string | null>(null);
   const [gravando, setGravando] = useState(false);
   const [tempoGravacao, setTempoGravacao] = useState(0);
   const [nivelMic, setNivelMic] = useState(0);
   const [mostrarDica, setMostrarDica] = useState(false);
   const [concluido, setConcluido] = useState(false);
+  const [avaliacaoGeral, setAvaliacaoGeral] = useState<AvaliacaoGeralFinal | null>(null);
+  const [gerandoAvaliacaoGeral, setGerandoAvaliacaoGeral] = useState(false);
 
   // Respostas gravadas e análises, por índice da pergunta
   const [respostasGravadas, setRespostasGravadas] = useState<Record<number, Gravacao>>({});
@@ -183,11 +225,14 @@ export default function AlunoAtividadePlayerPage({
   const gravadorRef = useRef<GravadorWav | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioAlunoRef = useRef<HTMLAudioElement | null>(null);
+  const audioProfessorRef = useRef<HTMLAudioElement | null>(null);
 
   const gravacaoAtual = respostasGravadas[indiceAtual];
   const audioUrl = gravacaoAtual?.url ?? null;
   const analiseAtual = analises[indiceAtual];
   const erroAnaliseAtual = errosAnalise[indiceAtual];
+  const perguntaAtual = perguntas[indiceAtual];
+  const tempoMaximoAtual = obterTempoMaximoPergunta(perguntaAtual);
 
   // Carregar dados da atividade
   useEffect(() => {
@@ -215,14 +260,17 @@ export default function AlunoAtividadePlayerPage({
     carregar();
   }, [atividadeId, router]);
 
-  const perguntaAtual = perguntas[indiceAtual];
-
   // Falar o enunciado da pergunta ou frase completa (TTS)
   const falarPergunta = (texto: string) => {
     if (audioAlunoRef.current) {
       audioAlunoRef.current.pause();
       audioAlunoRef.current.currentTime = 0;
       setReproduzindoAudioAluno(false);
+    }
+    if (audioProfessorRef.current) {
+      audioProfessorRef.current.pause();
+      audioProfessorRef.current.currentTime = 0;
+      setReproduzindoAudioProfessor(false);
     }
     if (!window.speechSynthesis) return;
 
@@ -238,6 +286,35 @@ export default function AlunoAtividadePlayerPage({
     window.speechSynthesis.speak(utterance);
   };
 
+  // Reproduzir o áudio da versão correta gravada pelo professor
+  const ouvirAudioProfessor = (urlProfessor?: string | null) => {
+    const url = urlProfessor || perguntaAtual?.audio_modelo_professor_url;
+    if (!url) return;
+
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setFalando(false);
+      setPalavraReproduzindo(null);
+    }
+    if (audioAlunoRef.current) {
+      audioAlunoRef.current.pause();
+      audioAlunoRef.current.currentTime = 0;
+      setReproduzindoAudioAluno(false);
+    }
+    if (audioProfessorRef.current) {
+      audioProfessorRef.current.pause();
+      audioProfessorRef.current.currentTime = 0;
+    }
+
+    const player = new Audio(url);
+    audioProfessorRef.current = player;
+    setReproduzindoAudioProfessor(true);
+
+    player.onended = () => setReproduzindoAudioProfessor(false);
+    player.onerror = () => setReproduzindoAudioProfessor(false);
+    player.play().catch(() => setReproduzindoAudioProfessor(false));
+  };
+
   // Reproduzir o áudio real gravado pelo aluno
   const ouvirAudioAluno = () => {
     if (!audioUrl) return;
@@ -245,6 +322,11 @@ export default function AlunoAtividadePlayerPage({
       window.speechSynthesis.cancel();
       setFalando(false);
       setPalavraReproduzindo(null);
+    }
+    if (audioProfessorRef.current) {
+      audioProfessorRef.current.pause();
+      audioProfessorRef.current.currentTime = 0;
+      setReproduzindoAudioProfessor(false);
     }
 
     if (audioAlunoRef.current) {
@@ -328,12 +410,71 @@ export default function AlunoAtividadePlayerPage({
     }
 
     const indice = indiceAtual;
-    const final = await gravador.parar();
+    const limitePergunta = obterTempoMaximoPergunta(perguntas[indice]);
+    const final = await gravador.parar(limitePergunta);
     gravadorRef.current = null;
     setRespostasGravadas((prev) => ({
       ...prev,
       [indice]: { url: URL.createObjectURL(final.wav), wav: final.wav, qualidade: final.qualidade },
     }));
+  };
+
+  // Parar automaticamente a gravação quando atingir o tempo máximo da pergunta (5s, 10s ou 20s)
+  useEffect(() => {
+    if (gravando && tempoGravacao >= tempoMaximoAtual) {
+      pararGravacao();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gravando, tempoGravacao, tempoMaximoAtual]);
+
+  // Gerar Avaliação Geral Final feita por IA ao concluir
+  const concluirAvaliacaoEGerarRelatorio = async () => {
+    setConcluido(true);
+    setGerandoAvaliacaoGeral(true);
+
+    try {
+      const itens = perguntas
+        .map((p, idx) => {
+          const an = analises[idx];
+          if (!an) return null;
+          return {
+            ordem: p.ordem || idx + 1,
+            enunciado: p.enunciado,
+            transcricao: an.transcricao || "",
+            nota_pronuncia: an.nota_pronuncia || 1,
+            nota_fluencia: an.nota_fluencia || 1,
+            nota_vocabulario: an.nota_vocabulario || 1,
+            nota_estrutura: an.nota_estrutura || 1,
+            frase_completa: Boolean(an.detalhes_criterios?.estrutura?.frase_completa ?? an.nota_estrutura >= 3),
+            resultado: an.resultado,
+            palavras_atencao: (an.palavras || [])
+              .filter((w) => w.status !== "ok")
+              .map((w) => w.palavra_alvo || w.palavra),
+          };
+        })
+        .filter(Boolean);
+
+      const res = await fetch(`/api/aluno/atividades/${atividadeId}/avaliacao-geral`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessaoId,
+          tituloAtividade: atividade?.titulo || "Avaliação Oral",
+          nivelAtividade: atividade?.nivel || "A1",
+          totalPerguntas: perguntas.length,
+          itens,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.avaliacaoGeral) {
+        setAvaliacaoGeral(data.avaliacaoGeral);
+      }
+    } catch {
+      // Continua na tela de conclusão
+    } finally {
+      setGerandoAvaliacaoGeral(false);
+    }
   };
 
   // Enviar para análise de pronúncia
@@ -406,7 +547,7 @@ export default function AlunoAtividadePlayerPage({
     if (indiceAtual < perguntas.length - 1) {
       mudarPergunta(indiceAtual + 1);
     } else {
-      setConcluido(true);
+      concluirAvaliacaoEGerarRelatorio();
     }
   };
 
@@ -442,45 +583,219 @@ export default function AlunoAtividadePlayerPage({
     );
   }
 
-  // TELA DE CONCLUSÃO
+  // TELA DE CONCLUSÃO COM AVALIAÇÃO GERAL FINAL FEITA POR IA
   if (concluido) {
+    const resGeral = avaliacaoGeral?.resultado_geral || "good_job";
+
     return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white flex flex-col items-center justify-center p-6 text-center font-sans">
-        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl">
-          <div className="w-20 h-20 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-3xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-emerald-500/10">
-            <Trophy className="w-10 h-10 animate-bounce" />
-          </div>
-
-          <div className="inline-flex items-center gap-1.5 bg-emerald-500/15 text-emerald-400 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider mb-3">
-            <Sparkles className="w-3.5 h-3.5" />
-            Parabéns! Good Job!
-          </div>
-
-          <h1 className="text-2xl font-black text-white">Avaliação Concluída!</h1>
-          <p className="text-sm text-slate-400 mt-2 leading-relaxed">
-            Você respondeu às {perguntas.length} perguntas orais de nível A1. Suas respostas foram salvas para revisão do seu professor.
-          </p>
-
-          <div className="my-6 p-4 bg-slate-950 rounded-2xl border border-slate-800 text-left">
-            <div className="flex items-center justify-between text-xs font-bold text-slate-400 mb-2">
-              <span>Perguntas respondidas:</span>
-              <span className="text-emerald-400">{Object.keys(respostasGravadas).length} de {perguntas.length}</span>
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white flex flex-col items-center justify-center p-4 sm:p-6 font-sans">
+        <div className="max-w-2xl w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
+          <div className="text-center">
+            <div className="w-20 h-20 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-3xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-500/10">
+              <Trophy className="w-10 h-10 animate-bounce" />
             </div>
-            <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
-              <div
-                className="bg-emerald-500 h-full rounded-full transition-all"
-                style={{ width: `${(Object.keys(respostasGravadas).length / perguntas.length) * 100}%` }}
-              />
-            </div>
+
+            {resGeral === "excellent" ? (
+              <div className="inline-flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-3">
+                <Trophy className="w-4 h-4 text-emerald-400" />
+                Excellent!
+              </div>
+            ) : resGeral === "good_job" ? (
+              <div className="inline-flex items-center gap-1.5 bg-sky-500/20 text-sky-300 border border-sky-400/40 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-3">
+                <ThumbsUp className="w-4 h-4 text-sky-400" />
+                Good Job!
+              </div>
+            ) : resGeral === "doing_ok" ? (
+              <div className="inline-flex items-center gap-1.5 bg-amber-500/20 text-amber-300 border border-amber-400/40 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-3">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                Doing OK, but you can improve!
+              </div>
+            ) : (
+              <div className="inline-flex items-center gap-1.5 bg-rose-500/20 text-rose-300 border border-rose-400/40 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-3">
+                <RotateCcw className="w-4 h-4 text-rose-400" />
+                Try Again!
+              </div>
+            )}
+
+            <h1 className="text-2xl sm:text-3xl font-black text-white">Avaliação Concluída!</h1>
+            <p className="text-sm text-slate-400 mt-1.5 leading-relaxed">
+              Confira abaixo a sua <strong>Avaliação Geral Final</strong> elaborada pela Inteligência Artificial.
+            </p>
           </div>
 
-          <Link
-            href="/aluno/atividades"
-            className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Home className="w-4 h-4" />
-            Voltar para Atividades
-          </Link>
+          {gerandoAvaliacaoGeral && (
+            <div className="my-6 p-6 bg-slate-950/90 rounded-2xl border border-indigo-500/30 flex flex-col items-center justify-center text-center">
+              <Loader2 className="w-8 h-8 animate-spin text-indigo-400 mb-3" />
+              <p className="text-sm font-bold text-indigo-300">
+                Gerando sua Avaliação Geral Final por IA...
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                Consolidando suas notas de pronúncia, fluência, vocabulário e estrutura nas {perguntas.length} questões.
+              </p>
+            </div>
+          )}
+
+          {!gerandoAvaliacaoGeral && avaliacaoGeral && (
+            <div className="my-6 space-y-4 text-left">
+              {/* Resumo Geral de Participação e Médias */}
+              <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                  <div>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-indigo-400 block">
+                      Desempenho Global na Atividade
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      Respondidas: <strong className="text-white">{avaliacaoGeral.total_respondidas} de {avaliacaoGeral.total_perguntas}</strong> • Frases completas:{" "}
+                      <strong className="text-emerald-400">
+                        {avaliacaoGeral.total_frases_completas}/{avaliacaoGeral.total_respondidas}
+                      </strong>
+                    </span>
+                  </div>
+                  <div className="bg-indigo-500/15 border border-indigo-500/30 px-3.5 py-1.5 rounded-xl text-right">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 block">
+                      Média Geral
+                    </span>
+                    <span className="text-lg font-black text-white">
+                      {avaliacaoGeral.media_geral.toFixed(1)} <span className="text-xs text-slate-400">/ 4.0</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Médias por Critério */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { rotulo: "Pronúncia", valor: avaliacaoGeral.media_pronuncia },
+                    { rotulo: "Fluência", valor: avaliacaoGeral.media_fluencia },
+                    { rotulo: "Vocabulário", valor: avaliacaoGeral.media_vocabulario },
+                    { rotulo: "Estrutura", valor: avaliacaoGeral.media_estrutura },
+                  ].map((crit) => {
+                    const corIdx = Math.min(4, Math.max(1, Math.round(crit.valor)));
+                    return (
+                      <div key={crit.rotulo} className="bg-slate-900/90 p-3 rounded-xl border border-slate-800">
+                        <div className="flex items-center justify-between text-xs font-bold mb-1.5">
+                          <span className="text-slate-400">{crit.rotulo}</span>
+                          <span className="text-white">{crit.valor.toFixed(1)}/4</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${COR_NOTA[corIdx]}`}
+                            style={{ width: `${Math.min(100, (crit.valor / 4) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Parecer Geral da IA */}
+              <div className="p-4 bg-indigo-950/30 border border-indigo-500/30 rounded-2xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="w-4 h-4 text-indigo-400" />
+                  <h3 className="text-xs font-black uppercase tracking-wider text-indigo-300">
+                    Avaliação Geral Final feita por IA
+                  </h3>
+                </div>
+                <p className="text-sm text-slate-200 leading-relaxed font-medium">
+                  {avaliacaoGeral.resumo_ia}
+                </p>
+              </div>
+
+              {/* Pontos Fortes e Pontos a Melhorar */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-4 bg-emerald-950/30 border border-emerald-800/50 rounded-2xl space-y-2">
+                  <div className="flex items-center gap-2 text-emerald-400 font-black text-xs uppercase tracking-wider">
+                    <ThumbsUp className="w-4 h-4" />
+                    Principais Conquistas
+                  </div>
+                  <ul className="space-y-1.5 text-xs text-emerald-100">
+                    {avaliacaoGeral.pontos_fortes.map((pf, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                        <span>{pf}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="p-4 bg-amber-950/30 border border-amber-800/50 rounded-2xl space-y-2">
+                  <div className="flex items-center gap-2 text-amber-400 font-black text-xs uppercase tracking-wider">
+                    <Target className="w-4 h-4" />
+                    Como Evoluir Ainda Mais
+                  </div>
+                  <ul className="space-y-1.5 text-xs text-amber-100">
+                    {avaliacaoGeral.pontos_melhorar.map((pm, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                        <span>{pm}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              {/* Palavras recomendadas para praticar */}
+              {avaliacaoGeral.palavras_praticar && avaliacaoGeral.palavras_praticar.length > 0 && (
+                <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-slate-400 mb-2">
+                    🔊 Palavras da atividade para praticar (clique para ouvir a pronúncia):
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {avaliacaoGeral.palavras_praticar.map((pal, idx) => (
+                      <button
+                        key={`${pal}-${idx}`}
+                        type="button"
+                        onClick={() => falarPalavra(pal)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-violet-500/15 hover:bg-violet-500/25 text-violet-300 border border-violet-500/30 transition-all cursor-pointer"
+                      >
+                        <span>{pal}</span>
+                        <Volume2 className="w-3.5 h-3.5" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!gerandoAvaliacaoGeral && !avaliacaoGeral && (
+            <div className="my-6 p-4 bg-slate-950 rounded-2xl border border-slate-800 text-left">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-400 mb-2">
+                <span>Perguntas respondidas:</span>
+                <span className="text-emerald-400">
+                  {Object.keys(respostasGravadas).length} de {perguntas.length}
+                </span>
+              </div>
+              <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                <div
+                  className="bg-emerald-500 h-full rounded-full transition-all"
+                  style={{ width: `${(Object.keys(respostasGravadas).length / perguntas.length) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3 mt-4">
+            <button
+              type="button"
+              onClick={() => {
+                setConcluido(false);
+                setIndiceAtual(0);
+              }}
+              className="flex-1 h-12 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-sm rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Revisar Questões
+            </button>
+
+            <Link
+              href="/aluno/atividades"
+              className="flex-1 h-12 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Home className="w-4 h-4" />
+              Voltar para Atividades
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -615,6 +930,10 @@ export default function AlunoAtividadePlayerPage({
 
           {/* Área de Gravação do Microfone */}
           <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-6 text-center flex flex-col items-center justify-center my-4">
+            <div className="mb-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-indigo-300 bg-indigo-500/10 border border-indigo-500/25 px-3 py-1 rounded-full">
+              <span>⏱️ Tempo de gravação: {rotuloTempoGravacao(tempoMaximoAtual)}</span>
+            </div>
+
             {!gravando && !audioUrl && (
               <div>
                 <button
@@ -631,7 +950,7 @@ export default function AlunoAtividadePlayerPage({
             )}
 
             {gravando && (
-              <div className="flex flex-col items-center animate-in fade-in">
+              <div className="flex flex-col items-center animate-in fade-in w-full max-w-xs">
                 <button
                   onClick={pararGravacao}
                   className="w-20 h-20 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-xl shadow-rose-600/50 animate-pulse cursor-pointer"
@@ -641,16 +960,25 @@ export default function AlunoAtividadePlayerPage({
                 </button>
                 <p className="text-xs font-bold text-rose-400 mt-3 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                  Gravando... ({tempoGravacao}s) — Fale agora!
+                  Gravando... ({tempoGravacao}s / {tempoMaximoAtual}s) — Fale agora!
                 </p>
+                {/* Barra de tempo restante */}
+                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mt-2">
+                  <div
+                    className="h-full bg-indigo-500 transition-[width] duration-300"
+                    style={{ width: `${Math.min(100, (tempoGravacao / tempoMaximoAtual) * 100)}%` }}
+                  />
+                </div>
                 {/* Medidor de volume do microfone */}
-                <div className="w-40 h-1.5 bg-slate-800 rounded-full overflow-hidden mt-2">
+                <div className="w-40 h-1.5 bg-slate-800 rounded-full overflow-hidden mt-1.5">
                   <div
                     className="h-full bg-gradient-to-r from-emerald-500 to-rose-500 transition-[width] duration-75"
                     style={{ width: `${Math.round(nivelMic * 100)}%` }}
                   />
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">Clique no quadrado para finalizar.</p>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Clique no quadrado para finalizar (encerra automaticamente em {tempoMaximoAtual}s).
+                </p>
               </div>
             )}
 
@@ -1312,6 +1640,20 @@ export default function AlunoAtividadePlayerPage({
                 </div>
 
                 <div className="pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center gap-2.5">
+                  {perguntaAtual.audio_modelo_professor_url && (
+                    <button
+                      type="button"
+                      onClick={() => ouvirAudioProfessor(perguntaAtual.audio_modelo_professor_url)}
+                      disabled={reproduzindoAudioProfessor}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-300 hover:text-violet-200 bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/40 px-3.5 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-60"
+                    >
+                      <Volume2 className={`w-4 h-4 ${reproduzindoAudioProfessor ? "animate-pulse" : ""}`} />
+                      {reproduzindoAudioProfessor
+                        ? "Ouvindo Professor..."
+                        : "Ouvir Professor (Versão Correta)"}
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => falarPergunta(analiseAtual.frase_modelo)}

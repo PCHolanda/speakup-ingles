@@ -3,9 +3,19 @@
  * Função pura: roda no navegador (pré-envio) e no servidor (confirmação).
  */
 
-export const LIMITES_QUALIDADE = {
+export interface LimitesQualidade {
+  duracaoMinS: number;
+  duracaoMaxS: number;
+  rmsFalaMin: number;
+  nivelClipping: number;
+  fracaoClippingMax: number;
+  snrMinDb: number;
+  frameMs: number;
+}
+
+export const LIMITES_QUALIDADE: LimitesQualidade = {
   duracaoMinS: 0.4,
-  duracaoMaxS: 15,
+  duracaoMaxS: 22,
   /** RMS (0–1) do trecho de fala abaixo disso = nenhuma voz detectada (~ -36 dBFS) */
   rmsFalaMin: 0.016,
   /** Amostras com |x| >= este valor contam como saturadas */
@@ -15,7 +25,7 @@ export const LIMITES_QUALIDADE = {
   /** Relação sinal/ruído mínima em dB */
   snrMinDb: 10,
   frameMs: 20,
-} as const;
+};
 
 export type MotivoQualidade =
   | "curto_demais"
@@ -64,8 +74,9 @@ function percentil(valores: number[], p: number): number {
 export function avaliarQualidade(
   amostras: Float32Array,
   sampleRate: number,
-  limites = LIMITES_QUALIDADE
+  limitesParciais?: Partial<LimitesQualidade>
 ): ResultadoQualidade {
+  const limites: LimitesQualidade = { ...LIMITES_QUALIDADE, ...limitesParciais };
   const duracaoS = amostras.length / sampleRate;
 
   const frame = Math.max(1, Math.round((limites.frameMs / 1000) * sampleRate));

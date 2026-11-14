@@ -94,7 +94,7 @@ export class GravadorWav {
     }
   }
 
-  async parar(): Promise<GravacaoFinal> {
+  async parar(duracaoMaxS?: number): Promise<GravacaoFinal> {
     const ctx = this.ctx;
     if (!ctx) throw new Error("Gravador não iniciado");
     const taxaOriginal = ctx.sampleRate;
@@ -118,7 +118,11 @@ export class GravadorWav {
     this.blocos = [];
 
     const amostras = reamostrar(bruto, taxaOriginal, SAMPLE_RATE_AZURE);
-    const qualidade = avaliarQualidade(amostras, SAMPLE_RATE_AZURE);
+    const qualidade = avaliarQualidade(
+      amostras,
+      SAMPLE_RATE_AZURE,
+      duracaoMaxS ? { duracaoMaxS: duracaoMaxS + 2 } : undefined
+    );
     const wavBytes = codificarWav(amostras, SAMPLE_RATE_AZURE);
     return {
       wav: new Blob([wavBytes.buffer as ArrayBuffer], { type: "audio/wav" }),

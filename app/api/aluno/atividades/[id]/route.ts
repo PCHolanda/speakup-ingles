@@ -45,34 +45,67 @@ const INSTRUCOES_FRASE_COMPLETA: Record<string, { instrucao_pt: string; dicas: s
   },
 };
 
-function normalizarPerguntaFraseCompleta<
-  T extends { id: string; instrucao_pt: string | null; dicas: string[] | null }
->(p: T): T {
-  const padrao = INSTRUCOES_FRASE_COMPLETA[p.id];
-  if (padrao) {
-    return {
-      ...p,
-      instrucao_pt: padrao.instrucao_pt,
-      dicas: padrao.dicas,
-    };
+function resolverStorageUrl(rawPath?: string | null): string | null {
+  if (!rawPath) return null;
+  const limpo = rawPath.trim();
+  if (!limpo) return null;
+  if (limpo.startsWith("http://") || limpo.startsWith("https://") || limpo.startsWith("/")) {
+    return limpo;
   }
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (supabaseUrl && (limpo.startsWith("modelos-professor/") || limpo.startsWith("imagens-questoes/"))) {
+    return `${supabaseUrl}/storage/v1/object/public/atividades/${limpo}`;
+  }
+  return `/seed/${limpo}`;
+}
+
+function normalizarPerguntaParaAluno(p: any) {
+  const gab = p.gabarito && typeof p.gabarito === "object" ? p.gabarito : {};
+  const padrao = INSTRUCOES_FRASE_COMPLETA[p.id];
 
   let instrucao = (p.instrucao_pt || "").trim();
-  if (!instrucao) {
+  if (padrao && !/frases?\s+completas?\s+dizendo|frases?\s+completas?\s+explicando|frases?\s+completas?\s+contando/i.test(instrucao)) {
+    instrucao = padrao.instrucao_pt;
+  } else if (!instrucao) {
     instrucao = "Responda em inglês usando uma frase completa.";
   } else if (!/frases?\s+completas?/i.test(instrucao)) {
     const semPonto = instrucao.replace(/\.+$/, "");
     instrucao = `${semPonto} (responda usando uma frase completa em inglês).`;
   }
 
-  const dicasNormalizadas = (p.dicas || []).map((d) =>
-    /frases?\s+completas?/i.test(d) ? d : `Responda com frase completa. ${d}`
-  );
+  let dicas = Array.isArray(p.dicas) ? p.dicas : [];
+  if (padrao && !dicas.some((d: string) => /frases?\s+completas?/i.test(d))) {
+    dicas = padrao.dicas;
+  } else {
+    dicas = dicas.map((d: string) =>
+      /frases?\s+completas?/i.test(d) ? d : `Responda com frase completa. ${d}`
+    );
+  }
+
+  const tempoRaw = Number(p.tempo_gravacao_s ?? gab.tempo_gravacao_s ?? (p.tipo === "comparacao" ? 20 : 10));
+  const tempoGravacaoS: 5 | 10 | 20 = tempoRaw === 5 ? 5 : tempoRaw === 20 ? 20 : 10;
+
+  const audioProfPath: string | null =
+    p.audio_modelo_professor_path ?? gab.audio_modelo_professor_path ?? null;
+
+  const temImagem =
+    gab.tem_imagem !== undefined
+      ? Boolean(gab.tem_imagem && p.imagem_path)
+      : Boolean(p.imagem_path && p.tipo !== "oral");
 
   return {
-    ...p,
+    id: p.id,
+    secao: p.secao,
+    ordem: p.ordem,
+    tipo: temImagem ? p.tipo : "oral",
+    tem_imagem: temImagem,
+    enunciado: p.enunciado,
     instrucao_pt: instrucao,
-    dicas: dicasNormalizadas.length > 0 ? dicasNormalizadas : p.dicas,
+    dicas,
+    imagem_path: temImagem ? p.imagem_path : null,
+    respostas_esperadas: Array.isArray(p.respostas_esperadas) ? p.respostas_esperadas : [],
+    tempo_gravacao_s: tempoGravacaoS,
+    audio_modelo_professor_url: audioProfPath ? resolverStorageUrl(audioProfPath) : null,
   };
 }
 
@@ -102,10 +135,10 @@ export async function GET(
       return NextResponse.json({ error: "Atividade não encontrada" }, { status: 404 });
     }
 
-    // 2. Buscar perguntas da atividade
+    // 2. Buscar perguntas da atividade (incluindo gabarito e colunas extras)
     const { data: perguntas, error: pergError } = await admin
       .from("perguntas")
-      .select("id, secao, ordem, tipo, enunciado, instrucao_pt, dicas, imagem_path")
+      .select("*")
       .eq("atividade_id", id)
       .order("ordem", { ascending: true });
 
@@ -148,7 +181,7 @@ export async function GET(
     return NextResponse.json({
       atividade,
       sessaoId,
-      perguntas: (perguntas || []).map(normalizarPerguntaFraseCompleta),
+      perguntas: (perguntas || []).map(normalizarPerguntaParaAluno),
     });
   } catch (error: unknown) {
     console.error("Erro ao carregar detalhes da atividade:", error);

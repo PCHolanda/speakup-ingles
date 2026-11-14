@@ -142,7 +142,7 @@ export default function AlunoAtividadesPage() {
               Hello, {aluno?.nome || "Aluno"}! 👋
             </h1>
             <p className="text-sm text-blue-100 mt-2 font-medium leading-relaxed">
-              Pronto para praticar sua pronúncia em inglês? Ouça as perguntas com atenção e responda falando no microfone.
+              Pronto para praticar suas estruturas, vocabulário e pronúncia em inglês? Ouça as perguntas com atenção e responda falando no microfone.
             </p>
           </div>
 
