@@ -125,6 +125,18 @@ function resolverUrlImagem(imagemPath?: string | null): string | null {
   return `/seed/${limpo}`;
 }
 
+function obterDicaContextoFraseCompleta(pergunta: Pergunta): string {
+  const instrucao = (pergunta.instrucao_pt || "").trim();
+  if (!instrucao) {
+    return "Responda em inglês usando uma frase completa.";
+  }
+  if (/frases?\s+completas?/i.test(instrucao)) {
+    return instrucao;
+  }
+  const semPonto = instrucao.replace(/\.+$/, "");
+  return `${semPonto} (responda usando uma frase completa em inglês).`;
+}
+
 interface Atividade {
   id: string;
   titulo: string;
@@ -536,12 +548,10 @@ export default function AlunoAtividadePlayerPage({
             &ldquo;{perguntaAtual.enunciado}&rdquo;
           </h2>
 
-          {/* Instrução em Português */}
-          {perguntaAtual.instrucao_pt && (
-            <p className="text-sm font-medium text-slate-400 mb-6">
-              💡 {perguntaAtual.instrucao_pt}
-            </p>
-          )}
+          {/* Instrução em Português (Dica de Contexto) */}
+          <p className="text-sm font-medium text-slate-400 mb-6">
+            💡 {obterDicaContextoFraseCompleta(perguntaAtual)}
+          </p>
 
           {/* Imagem da Questão (quando houver imagem_path) */}
           {perguntaAtual.imagem_path && (

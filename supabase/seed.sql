@@ -22,12 +22,12 @@ insert into perguntas (
   1,
   'oral',
   'What is your name?',
-  'Diga o seu nome completo ou primeiro nome em inglês.',
+  'Responda em inglês com uma frase completa dizendo o seu nome (ex.: "My name is...").',
   null,
   array['My name is ...', 'I am ...', 'I''m ...', 'It''s ...'],
   'My name is',
   array['pronúncia de "my name is" / "it''s"', 'verbo to be'],
-  array['You can say: My name is…'],
+  array['Responda com frase completa. You can say: My name is…'],
   null
 ),
 (
@@ -37,12 +37,12 @@ insert into perguntas (
   2,
   'oral',
   'How old are you?',
-  'Diga a sua idade em inglês usando uma frase completa.',
+  'Responda em inglês com uma frase completa dizendo a sua idade (ex.: "I am ... years old").',
   null,
   array['I am ... years old.', 'I''m ... years old.'],
   'I am years old',
   array['números', 'pronúncia de "years"'],
-  array['You can say: I am … years old.'],
+  array['Responda com frase completa. You can say: I am … years old.'],
   null
 ),
 (
@@ -52,12 +52,12 @@ insert into perguntas (
   3,
   'oral',
   'Where are you from?',
-  'Diga de onde você é (país ou cidade) em inglês.',
+  'Responda em inglês com uma frase completa dizendo de onde você é, país ou cidade (ex.: "I am from...").',
   null,
   array['I am from Brazil.', 'I''m from Brazil.', 'I am from São Paulo.', 'I''m from São Paulo.'],
   'I am from Brazil',
   array['pronúncia de "from"', 'nomes de lugares'],
-  array['You can say: I''m from…'],
+  array['Responda com frase completa. You can say: I''m from…'],
   null
 ),
 (
@@ -67,12 +67,12 @@ insert into perguntas (
   4,
   'oral',
   'Do you have brothers or sisters?',
-  'Responda se você tem irmãos ou irmãs em inglês.',
+  'Responda em inglês com uma frase completa dizendo se você tem irmãos ou irmãs (ex.: "Yes, I have..." ou "No, I don''t").',
   null,
   array['Yes, I have a brother.', 'Yes, I have a sister.', 'Yes, I have brothers.', 'No, I don''t.'],
   'Yes I have a brother or No I don''t',
   array['vocabulário de família', 'short answer'],
-  array['You can say: Yes, I have… or No, I don''t.'],
+  array['Responda com frase completa. You can say: Yes, I have… or No, I don''t.'],
   null
 ),
 (
@@ -82,12 +82,12 @@ insert into perguntas (
   5,
   'oral',
   'What time do you wake up?',
-  'Diga o horário em que você costuma acordar.',
+  'Responda em inglês com uma frase completa dizendo o horário em que você costuma acordar (ex.: "I wake up at...").',
   null,
   array['I wake up at seven o''clock.', 'I wake up at six o''clock.', 'I wake up at eight o''clock.'],
   'I wake up at seven o''clock',
   array['horas', 'pronúncia de "wake up"'],
-  array['You can say: I wake up at…'],
+  array['Responda com frase completa. You can say: I wake up at…'],
   null
 ),
 (
@@ -97,12 +97,12 @@ insert into perguntas (
   6,
   'oral',
   'What do you do in the morning?',
-  'Conte uma ou mais coisas que você faz pela manhã.',
+  'Responda em inglês com uma frase completa contando uma ou mais coisas que você faz pela manhã (ex.: "In the morning, I...").',
   null,
   array['I have breakfast and I go to school.', 'I brush my teeth and get dressed.', 'I have breakfast.'],
   'I have breakfast and go to school',
   array['verbos de rotina', 'conectores simples (and, then)'],
-  array['You can say: In the morning, I…', 'Think about breakfast, school, teeth…'],
+  array['Responda com frase completa. You can say: In the morning, I…', 'Think about breakfast, school, teeth…'],
   null
 ),
 (
@@ -112,12 +112,12 @@ insert into perguntas (
   7,
   'imagem',
   'What animal is this?',
-  'Olhe a imagem e diga que animal é este em inglês usando uma frase.',
+  'Olhe a imagem e responda em inglês com uma frase completa dizendo que animal é este (ex.: "It is a...").',
   'gato-caixa.png',
   array['It is a cat.', 'This is a cat.', 'It''s a cat.'],
   'It is a cat',
   array['vocabulário de animais', 'This is / It is (ordem)'],
-  array['You can say: It is a…'],
+  array['Responda com frase completa. You can say: It is a…'],
   null
 ),
 (
@@ -127,12 +127,12 @@ insert into perguntas (
   8,
   'imagem',
   'What color is the cat?',
-  'Olhe a imagem e diga a cor do gato em uma frase completa.',
+  'Olhe a imagem e responda em inglês com uma frase completa dizendo a cor do gato (ex.: "The cat is...").',
   'gato-caixa.png',
   array['The cat is white.', 'It is white.', 'It''s white.'],
   'The cat is white',
   array['cores', 'It is (ordem)'],
-  array['You can say: The cat is…'],
+  array['Responda com frase completa. You can say: The cat is…'],
   null
 ),
 (
@@ -142,12 +142,12 @@ insert into perguntas (
   9,
   'imagem',
   'Where is the cat?',
-  'Olhe a posição do gato em relação à caixa e diga onde ele está.',
+  'Olhe a imagem e responda em inglês com uma frase completa dizendo onde o gato está em relação à caixa (ex.: "The cat is on/in the box").',
   'gato-caixa.png',
   array['The cat is on the box.', 'It is on a box.', 'It''s on the box.'],
   'The cat is on the box',
   array['preposições', 'It is (ordem)'],
-  array['You can say: The cat is on/in…'],
+  array['Responda com frase completa. You can say: The cat is on/in…'],
   null
 ),
 (
@@ -157,7 +157,7 @@ insert into perguntas (
   10,
   'comparacao',
   'These two pictures are mostly the same, but there are 4 things that are different. Can you tell me the differences?',
-  'Quando você encontrar uma diferença, explique o que muda entre o lado esquerdo e o lado direito (ex.: ''On the left, X is one color, but on the right, it is another color'').',
+  'Responda em inglês com frases completas explicando o que muda entre o lado esquerdo e o lado direito (ex.: "On the left, X is..., but on the right, it is...").',
   'comparacao-dia-noite.png',
   array[
     'On the left, the cat is black, but on the right, it is white.',
@@ -166,7 +166,7 @@ insert into perguntas (
   ],
   'On the left the cat is black but on the right it is white',
   array['estrutura comparativa On the left… but on the right…', 'cores', 'preposições', 'vocabulário do céu'],
-  array['Look at the cat.', 'Look at the sky.', 'Is the cat ON or IN the box?'],
+  array['Responda com frase completa (ex.: On the left, the cat is…, but on the right, it is…). Look at the cat, the box, and the sky.'],
   '{
     "diferencas": [
       { "id": "cor_gato", "esquerda": "black cat", "direita": "white cat", "palavras_chave": ["black","white","cat"] },
